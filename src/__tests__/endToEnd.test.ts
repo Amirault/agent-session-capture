@@ -170,6 +170,25 @@ describe("§9.18 end-to-end merge + guards", () => {
     return { header: parsed[0]!, events: parsed.slice(1) };
   }
 
+  it("Given an id that would escape the output directory, When the CLI runs, Then it is refused with exit 2 and nothing is written", () => {
+    // Given
+    const dbPath = fixtureDbWithLabel("specify", "c1");
+
+    // When
+    const result = runCli(dbPath, []).exitCode;
+    const escaped = spawnSync(
+      TSX,
+      ["src/cli.ts", "--id", "../esc", "--source", "warp", "--db-path", dbPath, "--out", outDir],
+      { cwd: ROOT, encoding: "utf8", timeout: 30000 }
+    );
+
+    // Then
+    expect(result).toBe(0);
+    expect(escaped.status).toBe(2);
+    expect(escaped.stderr).toContain("is not allowed");
+    expect(fs.existsSync(path.join(outDir, "..", "esc.jsonl"))).toBe(false);
+  });
+
   it("Given a first capture (specify) then a second (implement), When the CLI runs twice (default merge), Then the merged bundle has both labels", () => {
     // Given — first run writes specify
     runCli(fixtureDbWithLabel("specify", "c1"));

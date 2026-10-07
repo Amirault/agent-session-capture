@@ -84,8 +84,22 @@ function parseSource(value: string): CliSource {
   process.exit(2);
 }
 
+/** The id becomes a filename: refuse anything that could escape the output directory. */
+function isSafeCaptureId(id: string): boolean {
+  if (id.length === 0 || id.length > 200) return false;
+  const first = id.charCodeAt(0);
+  const alnum = (c: number) =>
+    (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+  if (!alnum(first)) return false;
+  for (let i = 1; i < id.length; i++) {
+    const c = id.charCodeAt(i);
+    if (!alnum(c) && c !== 46 && c !== 95 && c !== 45) return false;
+  }
+  return true;
+}
+
 function printUsage(): void {
-  console.error(`usage: tsx src/cli.ts --id <capture-id> --source warp|claude-code|hermes [--no-merge] [--out dir] [--db-path path] [--claude-root dir] [--hermes-db-path path]`);
+  console.error(`usage: capture.sh --id <capture-id> --source warp|claude-code|hermes [--no-merge] [--out dir] [--db-path path] [--claude-root dir] [--hermes-db-path path]`);
 }
 
 function readerFor(args: CliArgs & { source: CliSource }): ConversationReader {
@@ -156,6 +170,13 @@ function main(): void {
   if (!args.id) {
     console.error("error: --id <capture-id> is required");
     printUsage();
+    process.exit(2);
+  }
+
+  if (!isSafeCaptureId(args.id)) {
+    console.error(
+      `error: --id "${args.id}" is not allowed: use letters, digits, ".", "_" or "-" (it names the output file), starting with a letter or digit`
+    );
     process.exit(2);
   }
 

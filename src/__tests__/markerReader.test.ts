@@ -35,6 +35,11 @@ describe("parseMarker", () => {
     expect(parseMarker(": CAPTURE_MARKER v=1 id=x")).toEqual({ capture_id: "x", label: "default" });
   });
 
+  it("rejects a marker without the v=1 version token", () => {
+    expect(parseMarker(": CAPTURE_MARKER id=x")).toBeNull();
+    expect(parseMarker(": CAPTURE_MARKER v=2 id=x")).toBeNull();
+  });
+
   it("rejects a marker without an id or with an empty id", () => {
     expect(parseMarker(": CAPTURE_MARKER v=1 label=review")).toBeNull();
     expect(parseMarker(": CAPTURE_MARKER v=1 id= label=review")).toBeNull();

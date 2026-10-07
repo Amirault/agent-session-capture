@@ -28,6 +28,7 @@ Prose that merely mentions the marker never binds — only an executed command d
 
 ```bash
 git clone https://github.com/Amirault/agent-session-capture.git ~/tools/agent-session-capture
+export AGENT_CAPTURE_HOME=~/tools/agent-session-capture   # used by the skill; optional
 cd ~/tools/agent-session-capture && npm install        # Node >= 22.2 (npm may print a harmless install-scripts warning)
 ```
 
@@ -37,7 +38,8 @@ cd ~/tools/agent-session-capture && npm install        # Node >= 22.2 (npm may p
    : CAPTURE_MARKER v=1 id=checkout-bug
    ```
 
-2. Export, from your project directory:
+2. Export, from your project (any subdirectory works). `--source` must match the runtime the
+   session ran in:
 
    ```bash
    ~/tools/agent-session-capture/capture.sh --id checkout-bug --source claude-code
@@ -65,7 +67,7 @@ Strict NDJSON. Line 1 is a header, every other line is one event:
 
 ```json
 {"type":"bundle_header","capture_id":"checkout-bug","labels":["default"],"conversations_per_label":{"default":3},"conversation_ids":["…"],"extracted_at":"…","source":"claude-code"}
-{"capture_id":"checkout-bug","label":"default","conversation_id":"…","seq":1,"ts":"2026-06-30T10:10:00Z","role":"user","kind":"query","content":"fix the login redirect","meta":{"cwd":"/…","git_branch":"main"}}
+{"capture_id":"checkout-bug","label":"default","conversation_id":"…","seq":1,"ts":"2026-06-30T10:10:00.000Z","role":"user","kind":"query","content":"fix the login redirect","meta":{"cwd":"/…"}}
 ```
 
 `role` is `user|assistant|tool`; `kind` is `query|agent_message|command|tool_call|tool_result`.
@@ -90,7 +92,7 @@ in the **main checkout's** `.agent-captures/`, so they survive the worktree.
 
 Live stores are opened **read-only**: Warp through a `VACUUM INTO` snapshot that is deleted
 afterwards, Hermes through one read-only transaction, Claude Code transcripts are plain files.
-Nothing is sent anywhere — but bundles contain your raw prompts and tool output, so
+Nothing is sent anywhere, and the only thing written is `.agent-captures/<id>.jsonl` — but bundles contain your raw prompts and tool output, so
 add `.agent-captures/` to your project's `.gitignore` and review a bundle before sharing it.
 
 ## Warp schema note

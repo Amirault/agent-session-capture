@@ -15,7 +15,7 @@ that carries a marker with that `id` ends up in one bundle.
 | Field         | Required | Meaning                                                                                              |
 | ------------- | -------- | ---------------------------------------------------------------------------------------------------- |
 | `v=1`         | yes      | Format version, so adapters can evolve without breaking old data.                                    |
-| `id=<id>`     | yes      | What to group by. Any non-empty token without spaces: `JIRA-123`, `fix-login-bug`, `exp-2026-10-a`.   |
+| `id=<id>`     | yes      | What to group by: letters, digits, `.`, `_`, `-`, starting with a letter or digit (it names the output file). `JIRA-123`, `fix-login-bug`, `exp-2026-10-a`. Quotes are not interpreted. |
 | `label=<l>`   | no       | A free-form tag for this conversation within the id: a step, a role, a retry number. Default `default`. |
 
 Labels carry no semantics for the tool — they are copied into every event and tallied in the
@@ -46,7 +46,8 @@ Rules:
 - **Run it as its own shell call** — the whole command is the marker line alone: no `cd`
   prefix, no `;`/`&&` chaining, nothing after it. Warp and Hermes only bind a command that
   _starts_ with `: CAPTURE_MARKER`; the Claude Code adapter tolerates a marker chained on the
-  first line as a recovery path, not as a way to emit it.
+  first line as a recovery path, not as a way to emit it. Hermes additionally rejects any extra
+  token after the marker; Claude Code ignores trailing tokens, but do not rely on that.
 - **`id` must be the resolved literal**, never a `$(...)` substitution or shell variable —
   adapters match the submitted command text.
 - **Emit once per session**, as early as possible.

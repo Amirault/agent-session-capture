@@ -100,6 +100,8 @@ function parseMarkerSegment(
   const tokens = segment.trim().split(" ").filter((t) => t.length > 0);
   if (tokens[0] !== ":" || tokens[1] !== "CAPTURE_MARKER") return null;
 
+  if (tokens[2] !== "v=1") return null;
+
   let capture_id: string | null = null;
   let label: Label = DEFAULT_LABEL;
   for (const t of tokens) {

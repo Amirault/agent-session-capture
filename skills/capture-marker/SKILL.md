@@ -5,7 +5,7 @@ description: Emit a CAPTURE_MARKER no-op at the start of a task so this session 
 
 # Capture marker
 
-Paths assume this repository is cloned at `$AGENT_CAPTURE_HOME` (e.g. `~/tools/agent-session-capture`).
+Paths assume `$AGENT_CAPTURE_HOME` points at where you cloned this repository (e.g. `export AGENT_CAPTURE_HOME=~/tools/agent-session-capture`); substitute the real path if it is unset.
 
 ## 1. Emit the marker (start of the task)
 
@@ -41,4 +41,5 @@ $AGENT_CAPTURE_HOME/capture.sh --id <id> --source <session_source>
 ```
 
 It writes or merges `.agent-captures/<id>.jsonl`. A warning is not a failure: report it. Exit
-code `1` means no conversation carried the marker — say so instead of retrying blindly.
+code `1` means nothing was written (no conversation carried the marker, or the store could
+not be read) — read the message and report it instead of retrying blindly.
