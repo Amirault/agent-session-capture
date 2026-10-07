@@ -13,7 +13,14 @@
 # - Set AGENT_CAPTURE_NODE_RUNNER (e.g. "mise exec --") to run node through a version manager.
 set -euo pipefail
 
-TOOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve symlinks (bash 3.2 compatible) so `ln -s .../capture.sh ~/bin/cap` works.
+SRC="${BASH_SOURCE[0]}"
+while [[ -L "${SRC}" ]]; do
+  link_dir="$(cd "$(dirname "${SRC}")" && pwd)"
+  SRC="$(readlink "${SRC}")"
+  [[ "${SRC}" != /* ]] && SRC="${link_dir}/${SRC}"
+done
+TOOL_DIR="$(cd "$(dirname "${SRC}")" && pwd)"
 
 # shellcheck disable=SC2206 # intentional word splitting of the runner prefix
 RUNNER=(${AGENT_CAPTURE_NODE_RUNNER:-})
@@ -39,7 +46,8 @@ default_store() {
 
 if [[ ! -x "${TOOL_DIR}/node_modules/.bin/tsx" ]]; then
   echo "capture.sh: installing dependencies (first run)..." >&2
-  run npm ci --prefix "${TOOL_DIR}" --silent --no-audit --no-fund >&2
+  run npm ci --prefix "${TOOL_DIR}" --no-audit --no-fund >&2 ||
+    { echo "capture.sh: npm ci failed in ${TOOL_DIR}" >&2; exit 1; }
 fi
 
 needs_default_out=1

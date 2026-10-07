@@ -28,7 +28,7 @@ Prose that merely mentions the marker never binds — only an executed command d
 
 ```bash
 git clone https://github.com/Amirault/agent-session-capture.git ~/tools/agent-session-capture
-cd ~/tools/agent-session-capture && npm install        # Node >= 22.2
+cd ~/tools/agent-session-capture && npm install        # Node >= 22.2 (npm may print a harmless install-scripts warning)
 ```
 
 1. In any agent session, run (or ask the agent to run) the marker:
@@ -41,7 +41,7 @@ cd ~/tools/agent-session-capture && npm install        # Node >= 22.2
 
    ```bash
    ~/tools/agent-session-capture/capture.sh --id checkout-bug --source claude-code
-   # wrote .agent-captures/checkout-bug.jsonl (199 events, 3 conversations)
+   # wrote /path/to/your/project/.agent-captures/checkout-bug.jsonl (199 events, 3 conversations)
    ```
 
 Optional: `label=<name>` distinguishes several conversations of one id (a step, a role, a
@@ -91,7 +91,7 @@ in the **main checkout's** `.agent-captures/`, so they survive the worktree.
 Live stores are opened **read-only**: Warp through a `VACUUM INTO` snapshot that is deleted
 afterwards, Hermes through one read-only transaction, Claude Code transcripts are plain files.
 Nothing is sent anywhere — but bundles contain your raw prompts and tool output, so
-`.agent-captures/` is gitignored by default. Review a bundle before sharing it.
+add `.agent-captures/` to your project's `.gitignore` and review a bundle before sharing it.
 
 ## Warp schema note
 

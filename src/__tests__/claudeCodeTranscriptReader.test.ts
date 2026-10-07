@@ -328,4 +328,18 @@ describe("ClaudeCodeTranscriptReader", () => {
       content: "Refactoring pass done.",
     }));
   });
+
+  it("Given a transcript root that does not exist, When read, Then a skipped row names the missing directory", () => {
+    // Given
+    const reader = new ClaudeCodeTranscriptReader({ rootDir: "/nonexistent/claude-root" });
+
+    // When
+    const read = reader.readCapture("any");
+
+    // Then
+    expect(read.labelByCid.size).toBe(0);
+    expect(read.skipped).toEqual([
+      { table: "claude-root", reason: "transcript root not found", detail: "/nonexistent/claude-root" },
+    ]);
+  });
 });

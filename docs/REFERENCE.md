@@ -398,8 +398,8 @@ Given/When/Then.
   morning was fully unbindable the same night). Extract soon after finishing a
   session — don't rely on being able to extract it days later.
   **Mitigation (capture-at-close + decay-safe merge):** capture at the end
-  of each session into `.agent-captures/<id>.jsonl` (in the main checkout,
-  gitignored — `capture.sh` targets it even from a worktree). A later capture merges
+  of each session into `.agent-captures/<id>.jsonl` (in the main checkout — add it to
+  your `.gitignore`; `capture.sh` targets it even from a worktree). A later capture merges
   fresh + stored decay-safe — fresh events are primary, stored events fill gaps
   left by marker decay or ring-buffer eviction — so a session captured at close is
   recoverable even after its live binding is gone. Always go through the tool

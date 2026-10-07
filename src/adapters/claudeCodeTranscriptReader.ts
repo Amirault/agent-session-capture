@@ -33,6 +33,13 @@ export class ClaudeCodeTranscriptReader implements ConversationReader {
     const files = listJsonlFiles(this.rootDir);
     const records: JsonlRecord[] = [];
     const skipped: SkippedRow[] = [];
+    if (!fs.existsSync(this.rootDir)) {
+      skipped.push({
+        table: "claude-root",
+        reason: "transcript root not found",
+        detail: this.rootDir,
+      });
+    }
 
     for (const filePath of files) {
       const read = readJsonl(filePath);
