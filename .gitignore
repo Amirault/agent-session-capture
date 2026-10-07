@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.jsonl
+.tmp/
+.coverage/
+*.tsbuildinfo
+.agent-captures/

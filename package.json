@@ -1,0 +1,47 @@
+{
+  "name": "agent-session-capture",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Export every coding-agent conversation tagged with an id \u2014 from Claude Code, Hermes or Warp \u2014 as one chronological JSONL, using a shareable CAPTURE_MARKER no-op.",
+  "license": "MIT",
+  "author": "Tony Amirault",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Amirault/agent-session-capture.git"
+  },
+  "keywords": [
+    "ai-agents",
+    "claude-code",
+    "warp",
+    "hermes",
+    "session-capture",
+    "transcripts",
+    "observability"
+  ],
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "gen:schema": "tsx scripts/gen-schema-lookup.ts"
+  },
+  "engines": {
+    "node": ">=22.2.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "26.6.3",
+    "protobufjs": "8.8.0",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.0.2"
+  },
+  "bin": {
+    "agent-session-capture": "./capture.sh"
+  }
+}
