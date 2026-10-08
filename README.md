@@ -25,6 +25,16 @@ you choose. Afterwards, this tool finds every session that ran it and exports th
 : CAPTURE_MARKER v=1 id=checkout-bug        ← "checkout-bug" is the name you choose
 ```
 
+<div align="center">
+
+![Two Claude Code sessions tagged with the same id, then exported into one file](docs/demo/demo.gif)
+
+<sub>Recorded from two real headless <code>claude -p</code> runs; the window is a re-enactment,
+the prompts, commands and export output are real.
+<a href="docs/demo/render.py">How it was made</a></sub>
+
+</div>
+
 ## ⚡ In 60 seconds
 
 **0 · Install once** (Node ≥ 22.2)
