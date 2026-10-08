@@ -1,0 +1,23 @@
+{
+  "id": "cart-discount",
+  "source": "claude-code",
+  "prompts": [
+    "Run this exact shell command now, as its own command, and change nothing else:\n: CAPTURE_MARKER v=1 id=cart-discount\n\nThen: the discount should apply from 100 included (>=), but it does not. Fix it in cart.js, minimal change.",
+    "Run this exact shell command now, as its own command, and change nothing else:\n: CAPTURE_MARKER v=1 id=cart-discount\n\nThen add a tiny test file cart.test.js (plain node:assert, no dependencies) covering a cart worth exactly 100, and run it with node."
+  ],
+  "export_output": "wrote .agent-captures/cart-discount.jsonl (26 events, 2 conversations)",
+  "provenance": "Prompts, agent sentences (outcomes, verbatim excerpts of each session's final answer), the marker commands, the export line and the jq output were recorded from two real headless `claude -p --model haiku` runs in a throwaway project (a 5-line cart.js with an off-by-one discount), exported with `capture.sh --id cart-discount --source claude-code`. The chat/terminal window is a re-enactment drawn by render.py.",
+  "jq_filter": "select(.kind==\"tool_call\" and (.content|startswith(\"{\")|not)) | \"\\(.ts[11:19]) \\(.conversation_id[0:4]) \\(.content)\"",
+  "jq_output": [
+    "18:00:08 7a6b : CAPTURE_MARKER v=1 id=cart-discount",
+    "18:00:09 7a6b ls -la && git status --short && find . -name cart.js -not -path '*/node_modules/*'",
+    "18:00:11 7a6b cat -n cart.js && git log --oneline | head -5",
+    "18:00:14 7a6b git diff && node -e 'const {total}=require(\"./cart.js\"); console.log(total([{price:100,qty:1}]), total([{price:99,qty:1}]))'",
+    "18:00:21 eeef : CAPTURE_MARKER v=1 id=cart-discount",
+    "18:00:26 eeef node cart.test.js; echo \"exit=$?\""
+  ],
+  "outcomes": [
+    "The bug is the `>` on line 4; the comment says 100 and up, so it should be `>=`.",
+    "Running `node cart.test.js` printed `cart.test.js: all assertions passed` and exited with code 0."
+  ]
+}
