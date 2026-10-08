@@ -58,8 +58,9 @@ Rules:
 
 The marker is deliberately easy to _suggest_ rather than hard-code:
 
-- **A human** can type `: CAPTURE_MARKER v=1 id=checkout-bug` into any agent session, or ask
-  the agent to run it.
+- **A human** asks the agent to run it — paste the one-line prompt from the README into the
+  session. The command must be executed by the agent through its shell tool; typing it in a
+  separate terminal of your own is not part of the agent's session and will not bind.
 - **A skill / rules file** can instruct agents to emit it at the start of a task — see
   [`skills/capture-marker`](../skills/capture-marker/SKILL.md).
 - **A teammate** can send you the line (`id=…`) in a PR description or a chat; if their
