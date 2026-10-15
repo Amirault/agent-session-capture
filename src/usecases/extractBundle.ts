@@ -1,11 +1,11 @@
 import type {
   ConversationEvent,
-  EventDraft,
   RunSummary,
   CaptureBundle,
 } from "../domain/models.js";
 import { computeBundleHeader } from "../domain/bundleHeader.js";
 import { mergeBundles } from "../domain/mergeBundle.js";
+import { causalSortTimestamp } from "../domain/causalSort.js";
 import type { ConversationReader, CaptureRead } from "../domain/ports.js";
 
 export interface ExtractOptions {
@@ -20,22 +20,6 @@ export interface ExtractResult {
   summary: RunSummary;
 }
 
-function numericMeta(draft: EventDraft, key: string): number | undefined {
-  const value = draft.meta[key];
-  return typeof value === "number" ? value : undefined;
-}
-
-function causalSortTimestamp(
-  draft: EventDraft,
-  highWaterByConversation: Map<string, string>
-): string {
-  if (numericMeta(draft, "message_id") === undefined) return draft.ts;
-
-  const previous = highWaterByConversation.get(draft.conversation_id);
-  const sortTimestamp = previous !== undefined && previous > draft.ts ? previous : draft.ts;
-  highWaterByConversation.set(draft.conversation_id, sortTimestamp);
-  return sortTimestamp;
-}
 /**
  * Orchestrate the full extraction for one capture id against a ConversationReader:
  *   reader.readCapture -> bound conversations (label per conversation) + event drafts

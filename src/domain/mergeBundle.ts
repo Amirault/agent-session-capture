@@ -1,4 +1,4 @@
-import type { ConversationEvent, Label, CaptureBundle } from "./models.js";
+import type { ConversationEvent, Label, CaptureBundle, Role, EventKind } from "./models.js";
 import { computeBundleHeader } from "./bundleHeader.js";
 
 /** Merge-only aggregation metadata can change when the same task is re-read. */
@@ -13,13 +13,30 @@ const SOURCE_SURROGATE_META_KEYS: ReadonlySet<string> = new Set([
 type KeyMode = "strong" | "compatibility";
 
 /**
+ * Any event shape the decay-safe pairing machinery can merge: marker-mode
+ * `ConversationEvent`s and session-mode `SessionEvent`s. `label` is optional —
+ * session events deliberately carry none — and `JSON.stringify` drops
+ * undefined keys, so one key function serves both shapes.
+ */
+export interface MergeableEvent {
+  conversation_id: string;
+  label?: Label;
+  seq: number;
+  ts: string;
+  role: Role;
+  kind: EventKind;
+  content: string;
+  meta: Record<string, unknown>;
+}
+
+/**
  * Stable content identity used across captures. `seq` is always per-run. Only
  * Warp agent_tasks timestamps are mutable; stable timestamps remain part of all
  * other event identities so separate same-content queries/commands cannot merge.
  * Compatibility mode strips newly-added source IDs solely for matching legacy
  * stored bundles that predate those IDs.
  */
-function eventKey(event: ConversationEvent, mode: KeyMode): string {
+function eventKey(event: MergeableEvent, mode: KeyMode): string {
   const meta = Object.fromEntries(
     Object.entries(event.meta)
       .filter(
@@ -40,7 +57,7 @@ function eventKey(event: ConversationEvent, mode: KeyMode): string {
   });
 }
 
-function hasMutableTaskTimestamp(event: ConversationEvent): boolean {
+function hasMutableTaskTimestamp(event: MergeableEvent): boolean {
   return (
     event.kind === "agent_message" &&
     (typeof event.meta.task_id === "string" ||
@@ -49,7 +66,7 @@ function hasMutableTaskTimestamp(event: ConversationEvent): boolean {
   );
 }
 
-function hasSourceSurrogate(event: ConversationEvent): boolean {
+function hasSourceSurrogate(event: MergeableEvent): boolean {
   return Object.keys(event.meta).some((key) => SOURCE_SURROGATE_META_KEYS.has(key));
 }
 
@@ -74,22 +91,27 @@ function claimFreshIndex(
 }
 
 /**
- * Merge a stored bundle with a fresh one, decay-safe.
+ * Decay-safe merge of two event lists — the pairing machinery both extraction
+ * modes share (strong/compatibility keys, volatile-meta and source-surrogate
+ * handling, mutable-task-timestamp reconciliation).
  *
- * Fresh events are primary; stored events only fill gaps fresh can no longer bind
- * (full marker decay) or has evicted (partial ring-buffer eviction). Overlapping
- * re-read events dedup by stable source identity. Only Warp agent_tasks ignore
- * their mutable row timestamp, and legacy bundles use a compatibility key that
- * omits newly-added source IDs. Fresh content and meta remain primary; only the
- * earliest observed task timestamp is reconciled from the stored copy.
+ * Fresh events are primary; stored events only fill gaps fresh can no longer
+ * bind (full marker decay) or has evicted (partial ring-buffer eviction).
+ * Overlapping re-read events dedup by stable source identity. Only Warp
+ * agent_tasks ignore their mutable row timestamp, and legacy bundles use a
+ * compatibility key that omits newly-added source IDs. Fresh content and meta
+ * remain primary; only the earliest observed task timestamp is reconciled from
+ * the stored copy.
  *
- * Pure — no I/O. The caller owns reading the stored bundle and writing the
- * merged result. The merged header (labels, per-label tallies, …) is
- * recomputed from the merged event set.
+ * The result is stably sorted by ts (equal timestamps keep first-seen order)
+ * with a monotonic `seq` reassigned 1..N. Pure — no I/O; the caller owns
+ * reading the stored events and writing the merged result.
  */
-export function mergeBundles(existing: CaptureBundle, fresh: CaptureBundle): CaptureBundle {
-  const captureId = fresh.header.capture_id;
-  const unioned: ConversationEvent[] = fresh.events.map((event) => ({ ...event }));
+export function mergeEventLists<T extends MergeableEvent>(
+  stored: readonly T[],
+  fresh: readonly T[]
+): T[] {
+  const unioned: T[] = fresh.map((event) => ({ ...event }));
   const freshIndexesByStrongKey = new Map<string, number[]>();
   const freshIndexesByCompatibilityKey = new Map<string, number[]>();
   for (let index = 0; index < unioned.length; index++) {
@@ -104,40 +126,49 @@ export function mergeBundles(existing: CaptureBundle, fresh: CaptureBundle): Cap
   const consumedFreshIndexes = new Set<number>();
   const strongCursors = new Map<string, number>();
   const compatibilityCursors = new Map<string, number>();
-  for (const stored of existing.events) {
+  for (const storedEvent of stored) {
     let freshIndex = claimFreshIndex(
       freshIndexesByStrongKey,
       strongCursors,
       consumedFreshIndexes,
-      eventKey(stored, "strong")
+      eventKey(storedEvent, "strong")
     );
-    if (freshIndex === undefined && !hasSourceSurrogate(stored)) {
+    if (freshIndex === undefined && !hasSourceSurrogate(storedEvent)) {
       freshIndex = claimFreshIndex(
         freshIndexesByCompatibilityKey,
         compatibilityCursors,
         consumedFreshIndexes,
-        eventKey(stored, "compatibility")
+        eventKey(storedEvent, "compatibility")
       );
     }
     if (freshIndex === undefined) {
-      unioned.push(stored);
+      unioned.push(storedEvent);
       continue;
     }
 
     consumedFreshIndexes.add(freshIndex);
-    const fresh = unioned[freshIndex]!;
-    if (hasMutableTaskTimestamp(fresh) && stored.ts < fresh.ts) {
-      unioned[freshIndex] = { ...fresh, ts: stored.ts };
+    const freshEvent = unioned[freshIndex]!;
+    if (hasMutableTaskTimestamp(freshEvent) && storedEvent.ts < freshEvent.ts) {
+      unioned[freshIndex] = { ...freshEvent, ts: storedEvent.ts };
     }
   }
 
   // Stable sort by ts (equal timestamps keep first-seen order), then reassign a
-  // monotonic seq across the whole merged bundle.
+  // monotonic seq across the whole merged list.
   unioned.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
-  const events: ConversationEvent[] = unioned.map((e, i) => ({
-    ...e,
+  return unioned.map((event, index) => ({ ...event, seq: index + 1 }));
+}
+
+/**
+ * Merge a stored bundle with a fresh one, decay-safe — a thin wrapper over
+ * {@link mergeEventLists} that re-stamps the capture id and recomputes the
+ * bundle header (labels, per-label tallies, …) from the merged event set.
+ */
+export function mergeBundles(existing: CaptureBundle, fresh: CaptureBundle): CaptureBundle {
+  const captureId = fresh.header.capture_id;
+  const events = mergeEventLists<ConversationEvent>(existing.events, fresh.events).map((event) => ({
+    ...event,
     capture_id: captureId,
-    seq: i + 1,
   }));
 
   const labelByCid = new Map<string, Label>();

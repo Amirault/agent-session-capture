@@ -206,7 +206,109 @@ a marker was found but its binding block is gone — Warp can evict blocks rows 
 | `--db-path <path>`        | Override the live Warp DB path (`--source warp`).                                                                          |
 | `--claude-root <dir>`     | Override Claude Code transcript root (`--source claude-code`, default `~/.claude/projects`).                               |
 | `--hermes-db-path <path>` | Override Hermes `state.db` (`--source hermes`, default `$HERMES_HOME/state.db`).                                           |
+| `--sessions`              | Session mode: export every conversation, no marker — see [Session mode](#session-mode).                                    |
+| `--since <ISO-8601>`     | Session mode only: only conversations whose last activity is at/after the cutoff.                                        |
+| `--conversation <cid>`   | Session mode only: export exactly one conversation (debugging).                                                          |
 | `-h, --help`              | Print usage.                                                                                                               |
+
+---
+
+## Session mode
+
+`--sessions` is the non-marker export: instead of binding a `CAPTURE_MARKER` to
+conversations, it exports **every conversation** in the source store — one JSONL
+file per conversation, without `capture_id`/`label` (a session is not a capture:
+it is every conversation in the store, not the subset a marker bound). It exists
+for history you never tagged and as a safety net against marker-binding decay.
+
+Only `--source warp` implements it for now; the CLI rejects the others with
+exit 2 (`source "…" does not support --sessions yet`).
+
+```bash
+npx tsx src/cli.ts --sessions --source warp
+# custom output directory / explicit DB
+npx tsx src/cli.ts --sessions --source warp --out /tmp/sessions --db-path /path/to/warp.sqlite
+# recent conversations only, or exactly one
+npx tsx src/cli.ts --sessions --source warp --since 2026-07-01
+npx tsx src/cli.ts --sessions --source warp --conversation <cid>
+```
+
+### Sessions layout and incremental semantics
+
+Each conversation is written to `<outDir>/sessions/<file>.jsonl` (atomic write:
+tmp file + rename). The file name is the conversation id when that is already a
+safe single path segment (`[A-Za-z0-9._-]+`, not `.`/`..`); anything else is
+sanitized plus a digest suffix, so a conversation id can never traverse out of
+`sessions/`.
+
+Line 1 is a `session_header`:
+
+```json
+{
+  "type": "session_header",
+  "conversation_id": "…",
+  "source": "warp",
+  "last_modified": "2026-06-30 10:30:00.000000",
+  "extracted_at": "2026-06-30T10:45:00.000Z"
+}
+```
+
+`last_modified` is the source-native last-activity stamp — for Warp the `MAX` of
+`agent_conversations.last_modified_at` and `agent_tasks.last_modified_at`,
+durable tables that do not evict, so a conversation present only in
+`agent_tasks` is listed too. Every subsequent line is a session event: the same
+event shape as the bundle format minus `capture_id`/`label`, with a per-session
+`seq`:
+
+```json
+{
+  "conversation_id": "…",
+  "seq": 1,
+  "ts": "2026-06-30 10:10:00.000000",
+  "role": "user",
+  "kind": "query",
+  "content": "fix the login redirect",
+  "meta": { "cwd": "/…" }
+}
+```
+
+Re-runs are incremental:
+
+- a conversation whose stored `last_modified` equals the fresh stamp is
+  **unchanged** — not re-read, not rewritten (raw string equality, no parsing);
+- each gathered conversation is merged **decay-safe** with its stored file (fresh
+events primary, stored events fill gaps left by ring-buffer eviction), then
+  re-ordered and re-`seq`'d;
+- stored files that fall out of the enumeration (source eviction, a `--since`
+  window, a `--conversation` pick) are **untouched** — the files are the durable
+  record, never GC'd.
+
+Guards mirror the marker mode's stored-bundle guards: a corrupt session file, a
+source mismatch, or a header-vs-filename conversation mismatch fails the run
+loudly (nothing overwritten) unless `--no-merge` downgrades each violation to a
+warning and replaces the file. Guard warnings and skipped rows are reported one
+per line, never as bare counts.
+
+### Session exit codes
+
+| Code | Meaning |
+| ---- | ------- |
+| `0`  | At least one session written, or everything already up to date. |
+| `1`  | Zero sessions enumerated (`--since` too recent, unknown `--conversation`), or a read/guard failure. |
+| `2`  | Usage error (`--id` with `--sessions`; `--since`/`--conversation` without `--sessions`; unsupported source; unparseable `--since`). |
+
+### Session limitations
+
+- **Warp only** for now. Claude Code and Hermes session adapters are follow-ups;
+  the port (`SessionReader`) is already defined alongside `ConversationReader`
+  in `src/domain/ports.ts` (see [ADAPTERS.md](ADAPTERS.md#session-mode)).
+- **Task events carry `last_modified_at` as `ts`** — the protobuf walk has no
+  per-message timestamp yet, so a session's agent messages keep their source
+  order under the causal sort. A per-message timestamp patch is a planned
+  follow-up.
+- Enumeration uses only the durable `agent_conversations`/`agent_tasks` tables,
+  so a conversation evicted from both is no longer enumerated — but its exported
+  file is never deleted.
 
 ---
 

@@ -39,3 +39,43 @@ To add a runtime (Cursor, Aider, Codex CLI, …):
 5. **Test it with a fixture store** (see `claudeCodeTranscriptReader.test.ts` for the
    pattern): Given/When/Then, no real user data.
 6. Add the runtime's shell tool name to the table in [MARKER.md](MARKER.md#emission).
+
+## Session mode
+
+`--sessions` (see [REFERENCE.md](REFERENCE.md#session-mode)) exports every
+conversation without markers, through a second port,
+[`SessionReader`](../src/domain/ports.ts):
+
+```ts
+interface SessionReader {
+  readSessions(options: ReadSessionsOptions): SessionsRead; // enumerated sessions + gathered events
+}
+```
+
+An adapter implementing it must:
+
+1. **Enumerate every conversation** with its last-activity stamp
+   (`SessionInfo: { conversation_id, last_modified }`), applying the
+   `--since`/`--conversation` filters. Prefer a *durable* table — one that does
+   not evict old rows (Warp uses `agent_conversations` + `agent_tasks`, not
+   `ai_queries`/`blocks`). `last_modified: null` means "no durable stamp" and
+   forces a re-extract on every run — return a stamp if the store has one.
+2. **Skip unchanged conversations**: when a stored header's `last_modified`
+   equals the fresh stamp (raw string equality, no parsing — the stamp's
+   representation must never change), skip gathering that conversation
+   entirely. `options.storedByCid` holds the stored headers. A new
+   conversation, a changed stamp, or the `--conversation` pick is always
+   gathered.
+3. **Gather events for the rest** reusing the same `EventDraft`s as marker mode
+   (queries, blocks, tasks…), inside one snapshot for the whole run, reporting
+   skipped rows as warnings.
+
+Everything else — scanning stored session files, guards, decay-safe merging,
+atomic writes, reporting — is owned by the use case
+([`src/usecases/extractSessions.ts`](../src/usecases/extractSessions.ts)).
+
+Do not implement `readSessions` at all if the source cannot enumerate its
+conversations cheaply — the CLI then reports
+`source "…" does not support --sessions yet` (exit 2) instead of pretending.
+See [`warpConversationReader.ts`](../src/adapters/warpConversationReader.ts)
+for a worked example — it implements both ports.
