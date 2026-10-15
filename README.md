@@ -100,6 +100,27 @@ misses. An explicit, executed marker is deterministic, works the same in every r
 easy to share — paste the line in a PR description and a teammate's sessions export by the same
 name.
 
+## 📤 Export without a marker
+
+Already finished, or never tagged the session? `--sessions` skips the marker entirely and exports
+**every conversation** in the store — one JSONL file per conversation, no `capture_id`/`label`:
+
+```bash
+~/tools/agent-session-capture/capture.sh --sessions --source warp
+# wrote .agent-captures/sessions/<conversation-id>.jsonl (N events)
+# …
+# 87 sessions: 3 written, 84 unchanged, 0 untouched
+```
+
+It is **incremental**: a re-run reads only the conversations whose last-activity stamp changed
+and leaves every other file untouched. It is **decay-safe**: a re-read merges with the stored
+file, so events the store has since evicted stay recoverable. `--since <ISO-8601>` narrows the
+run to recent conversations, `--conversation <cid>` picks exactly one, and `--no-merge` replaces
+stored files instead of merging. Warp only, for now.
+
+The marker stays the default — it groups sessions *by task*, which a bare export cannot.
+Full reference: [docs/REFERENCE.md](docs/REFERENCE.md#session-mode).
+
 <details>
 <summary><b>🔌 Supported agents (adapters)</b></summary>
 

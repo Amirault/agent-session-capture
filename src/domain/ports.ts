@@ -1,4 +1,13 @@
-import type { BundleSource, EventDraft, Label, SeedMatch, SkippedRow, CaptureBundle } from "./models.js";
+import type {
+  BundleSource,
+  EventDraft,
+  Label,
+  SeedMatch,
+  SessionHeader,
+  SessionInfo,
+  SkippedRow,
+  CaptureBundle,
+} from "./models.js";
 
 /**
  * Minimal read-only query interface over a SQLite snapshot.
@@ -53,5 +62,55 @@ export interface CaptureRead {
   collisions: SeedMatch[];
   /** Seeds bound via the ai_queries temporal-proximity fallback (local orchestrated subagents). */
   heuristic_bindings: SeedMatch[];
+}
+
+/** Options for SessionReader.readSessions. */
+export interface ReadSessionsOptions {
+  /**
+   * ISO-8601 date or datetime cutoff (already validated by the CLI): only
+   * conversations whose last activity is at/after it are enumerated.
+   */
+  since?: string;
+  /** Debug filter: enumerate exactly this one conversation (always gathered). */
+  conversation?: string;
+  /**
+   * Stored session headers by conversation id, passed in by the use case. The
+   * pragmatic input that lets one snapshot serve enumeration + skip-unchanged
+   * for any future adapter: a session whose stored `last_modified` equals the
+   * fresh stamp (raw string equality) is not gathered.
+   */
+  storedByCid: Map<string, SessionHeader>;
+}
+
+/** What the reader gathered for one conversation. */
+export interface SessionGather {
+  drafts: EventDraft[];
+  skipped: SkippedRow[];
+  /** The conversation's fresh source-native stamp (recorded in the header). */
+  last_modified: string | null;
+}
+
+/** What SessionReader.readSessions returns for the whole run. */
+export interface SessionsRead {
+  source: BundleSource;
+  /** Sessions enumerated in this run, after the since/conversation filters. */
+  sessions: SessionInfo[];
+  /** Gathered events per conversation — only conversations that changed (or new). */
+  reads: Map<string, SessionGather>;
+}
+
+/**
+ * Reader port for the non-marker session mode (`--sessions`): enumerates every
+ * conversation in the source and gathers events for the ones that changed.
+ *
+ * A sibling of ConversationReader (which stays untouched for marker mode). The
+ * whole read runs inside ONE source snapshot; `storedByCid` (supplied by the
+ * use case from the stored file headers) drives skip-unchanged so unchanged
+ * conversations are never gathered. The Warp implementation lives in
+ * adapters/warpConversationReader.ts; other sources reject the mode until
+ * they implement this port.
+ */
+export interface SessionReader {
+  readSessions(options: ReadSessionsOptions): SessionsRead;
 }
 

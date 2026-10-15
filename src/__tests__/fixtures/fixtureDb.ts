@@ -217,6 +217,25 @@ export function seedBlock(
   );
 }
 
+/** Seed an agent_conversations row — the durable per-conversation stamp. */
+export function seedConversation(
+  db: FixtureDb,
+  opts: {
+    conversation_id: string;
+    last_modified_at?: string;
+    conversation_data?: string;
+  }
+): void {
+  db.prepare(
+    `INSERT INTO agent_conversations (conversation_id, conversation_data, last_modified_at)
+     VALUES (?, ?, ?)`
+  ).run(
+    opts.conversation_id,
+    opts.conversation_data ?? "{}",
+    opts.last_modified_at ?? "2026-06-30 12:00:00.000000"
+  );
+}
+
 export function seedTask(
   db: FixtureDb,
   opts: {

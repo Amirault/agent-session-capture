@@ -51,6 +51,44 @@ export interface ConversationEvent {
 /** A reader-produced event before the use-case attaches capture_id, label, and seq. */
 export type EventDraft = Omit<ConversationEvent, "capture_id" | "label" | "seq">;
 
+/**
+ * One event of an exported session (the `--sessions` mode). Deliberately
+ * without `capture_id`/`label`: a session is not a capture — it is every
+ * conversation in the store, not the subset a marker bound. Readers' existing
+ * EventDrafts feed both modes unchanged.
+ */
+export interface SessionEvent extends EventDraft {
+  /** Monotonic sequence number within the session (time-ordered). */
+  seq: number;
+}
+
+/** First line of every `sessions/<file>.jsonl` file. */
+export interface SessionHeader {
+  type: "session_header";
+  conversation_id: string;
+  source: BundleSource;
+  /**
+   * Source-native last-activity stamp. An equal value on re-run means the
+   * session is unchanged and the stored file is skipped. `null` means the
+   * source has no durable stamp — such a session is always re-extracted.
+   */
+  last_modified: string | null;
+  extracted_at: string;
+}
+
+/** A stored session file: its header (line 1) plus its events (lines 2..N). */
+export interface SessionFile {
+  header: SessionHeader;
+  events: SessionEvent[];
+}
+
+/** One enumerated session, before any events are gathered for it. */
+export interface SessionInfo {
+  conversation_id: string;
+  /** Source-native last-activity stamp; `null` means "no durable stamp". */
+  last_modified: string | null;
+}
+
 /** Uniform return shape for every reader. */
 export interface ReaderResult {
   drafts: EventDraft[];
@@ -124,6 +162,35 @@ export interface RunSummary {
   /** Set when the fresh external-source read failed and the result fell back to a stored bundle. */
   fresh_read_error: string | null;
   output_path: string | null;
+}
+
+/** One file written by a session-mode run. */
+export interface WrittenSession {
+  conversation_id: string;
+  /** Path actually written (`<outDir>/sessions/<file>.jsonl`). */
+  path: string;
+  events: number;
+}
+
+/** Result of one `--sessions` run (feeds formatSessionReport). */
+export interface SessionRunSummary {
+  source: BundleSource;
+  /** Raw `--since` value as passed on the command line, when given. */
+  since: string | null;
+  /** Raw `--conversation` value as passed on the command line, when given. */
+  conversation: string | null;
+  /** Sessions enumerated in this run, after the --since/--conversation filters. */
+  enumerated: number;
+  /** Sessions written or rewritten this run, in write order. */
+  written: WrittenSession[];
+  /** Conversation ids whose stored stamp matched — skipped, file untouched. */
+  unchanged: string[];
+  /** Stored files not touched by this run (not in this run's enumeration). */
+  untouched: string[];
+  /** Reader-reported skipped rows (surfaced one per line). */
+  skipped_rows: SkippedRow[];
+  /** Guard warnings downgraded from errors by --no-merge (one per line). */
+  warnings: string[];
 }
 
 // --- Raw DB row shapes (what the readers pull from the snapshot) -------------

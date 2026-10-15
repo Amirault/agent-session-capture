@@ -8,9 +8,11 @@ import { JsonlSink } from "./adapters/jsonlSink.js";
 import { JsonlBundleReader } from "./adapters/jsonlBundleReader.js";
 import { extractBundle } from "./usecases/extractBundle.js";
 import type { ExtractResult } from "./usecases/extractBundle.js";
-import { formatRunReport } from "./formatRunReport.js";
-import type { ConversationReader } from "./domain/ports.js";
-import type { CaptureBundle } from "./domain/models.js";
+import { extractSessions } from "./usecases/extractSessions.js";
+import { formatRunReport, formatSessionReport } from "./formatRunReport.js";
+import type { ConversationReader, SessionReader } from "./domain/ports.js";
+import type { CaptureBundle, SessionRunSummary } from "./domain/models.js";
+import { parseSinceUtc } from "./domain/stamps.js";
 
 type CliSource = "warp" | "claude-code" | "hermes";
 
@@ -22,6 +24,9 @@ interface CliArgs {
   hermesDbPath?: string;
   source?: CliSource;
   claudeRoot?: string;
+  sessions: boolean;
+  since?: string;
+  conversation?: string;
 }
 
 /** Attempt the parse; return the Error instead of throwing so callers can report it uniformly. */
@@ -37,6 +42,9 @@ function safeParseNodeArgs(argv: string[]) {
         "hermes-db-path": { type: "string" },
         source: { type: "string" },
         "claude-root": { type: "string" },
+        sessions: { type: "boolean", default: false },
+        since: { type: "string" },
+        conversation: { type: "string" },
         help: { type: "boolean", short: "h", default: false },
       },
       strict: true,
@@ -70,6 +78,9 @@ function parseArgs(argv: string[]): CliArgs {
     hermesDbPath: values["hermes-db-path"],
     source,
     claudeRoot: values["claude-root"],
+    sessions: values.sessions,
+    since: values.since,
+    conversation: values.conversation,
   };
 }
 
@@ -99,7 +110,8 @@ function isSafeCaptureId(id: string): boolean {
 }
 
 function printUsage(): void {
-  console.error(`usage: capture.sh --id <capture-id> --source warp|claude-code|hermes [--no-merge] [--out dir] [--db-path path] [--claude-root dir] [--hermes-db-path path]`);
+  console.error(`usage: capture.sh --id <capture-id> --source warp|claude-code|hermes [--no-merge] [--out dir] [--db-path path] [--claude-root dir] [--hermes-db-path path]
+       capture.sh --sessions --source warp [--since <ISO-8601>] [--conversation <cid>] [--no-merge] [--out dir] [--db-path path]`);
 }
 
 function readerFor(args: CliArgs & { source: CliSource }): ConversationReader {
@@ -167,6 +179,41 @@ function loadExistingBundle(
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
 
+  // Cross-mode flag validation — usage errors before any I/O. Neither check
+  // can fire on a marker-mode invocation without the new flags, so marker
+  // mode's behavior stays byte-identical.
+  if (!args.sessions && (args.since !== undefined || args.conversation !== undefined)) {
+    console.error("error: --since and --conversation are only valid together with --sessions");
+    printUsage();
+    process.exit(2);
+  }
+  if (args.sessions && args.id !== undefined) {
+    console.error(
+      "error: --id cannot be combined with --sessions — session mode exports every conversation, no capture id"
+    );
+    printUsage();
+    process.exit(2);
+  }
+
+  if (args.sessions) {
+    if (!args.source) {
+      console.error(
+        'error: --source is required for extraction ("warp", "claude-code", or "hermes")'
+      );
+      printUsage();
+      process.exit(2);
+    }
+    if (args.since !== undefined && parseSinceUtc(args.since) === null) {
+      console.error(
+        `error: --since "${args.since}" is not a parseable ISO-8601 date or datetime`
+      );
+      printUsage();
+      process.exit(2);
+    }
+    runSessionsMode({ ...args, sessions: true, source: args.source });
+    return;
+  }
+
   if (!args.id) {
     console.error("error: --id <capture-id> is required");
     printUsage();
@@ -222,6 +269,44 @@ function main(): void {
   if (replacedExisting && outPath !== null) {
     report.stderr.unshift(`replacing existing bundle (--no-merge): ${outPath}`);
   }
+  for (const line of report.stdout) console.log(line);
+  for (const line of report.stderr) console.error(line);
+  process.exit(report.exitCode);
+}
+
+/**
+ * The `--sessions` run: dispatch through the same readerFor, duck-type-check
+ * the SessionReader port (claude-code and hermes do not implement it yet),
+ * then extract + report. Exit codes: 2 usage (handled above), 1 fresh-read
+ * failure or zero sessions enumerated, 0 otherwise.
+ */
+function runSessionsMode(args: CliArgs & { sessions: true; source: CliSource }): void {
+  const reader = readerFor(args);
+  if (typeof (reader as Partial<SessionReader>).readSessions !== "function") {
+    console.error(`error: source "${args.source}" does not support --sessions yet`);
+    printUsage();
+    process.exit(2);
+  }
+
+  // The duck-type check above is the runtime guarantee; narrow for the
+  // type system (sources that do not implement SessionReader exited above).
+  const sessionReader = reader as unknown as SessionReader;
+  const outDir = args.out ?? "out";
+  let summary: SessionRunSummary;
+  try {
+    ({ summary } = extractSessions(sessionReader, {
+      outDir,
+      source: args.source,
+      since: args.since,
+      conversation: args.conversation,
+      noMerge: args.noMerge,
+    }));
+  } catch (e) {
+    console.error(`error: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  }
+
+  const report = formatSessionReport(summary);
   for (const line of report.stdout) console.log(line);
   for (const line of report.stderr) console.error(line);
   process.exit(report.exitCode);
