@@ -10,6 +10,7 @@ import { WarpConversationReader } from "../adapters/warpConversationReader.js";
 import type { ConversationReader, CaptureRead } from "../domain/ports.js";
 import type { ConversationEvent, EventDraft, Label, CaptureBundle } from "../domain/models.js";
 import { computeBundleHeader } from "../domain/bundleHeader.js";
+import { SourceAccessError } from "../domain/sourceErrors.js";
 
 const SPEC = "add-feature-x";
 
@@ -29,7 +30,7 @@ describe("§9.7 extractBundle tally", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("Given a spec with all three labels, When extracted, Then the header tallies all three labels", () => {
+  it("Given a spec with all three labels, When extracted, Then the header tallies all three labels", async () => {
     // Given — one conversation per label, each with a marker + a query
     const db = createFixture(dbPath);
     seedMarker(db, { capture_id: SPEC, label: "specify", conversation_id: "c1", start_ts: "2026-06-30 10:00:00.000000" });
@@ -40,7 +41,7 @@ describe("§9.7 extractBundle tally", () => {
     seedQuery(db, { conversation_id: "c3", start_ts: "2026-06-30 12:05:00.000000", text: "gate it" });
 
     // When
-    const { bundle } = extractBundle(new WarpConversationReader(fakeSource(db)), SPEC);
+    const { bundle } = await extractBundle(new WarpConversationReader(fakeSource(db)), SPEC);
 
     // Then
     expect(bundle).not.toBeNull();
@@ -53,7 +54,7 @@ describe("§9.7 extractBundle tally", () => {
     db.close();
   });
 
-  it("Given a spec missing a label plus an unbindable marker, When extracted, Then the labels present are tallied and the warning is surfaced", () => {
+  it("Given a spec missing a label plus an unbindable marker, When extracted, Then the labels present are tallied and the warning is surfaced", async () => {
     // Given — specify + implement only, and one unbindable marker (no binding block)
     const db = createFixture(dbPath);
     seedMarker(db, { capture_id: SPEC, label: "specify", conversation_id: "c1", start_ts: "2026-06-30 10:00:00.000000" });
@@ -64,7 +65,7 @@ describe("§9.7 extractBundle tally", () => {
     );
 
     // When
-    const { bundle, summary } = extractBundle(new WarpConversationReader(fakeSource(db)), SPEC);
+    const { bundle, summary } = await extractBundle(new WarpConversationReader(fakeSource(db)), SPEC);
 
     // Then — incomplete, missing label reported, unbindable marker surfaced as a warning
     expect(bundle).not.toBeNull();
@@ -73,7 +74,7 @@ describe("§9.7 extractBundle tally", () => {
     db.close();
   });
 
-  it("Given re-runs of a label (two conversations), When extracted, Then both are kept", () => {
+  it("Given re-runs of a label (two conversations), When extracted, Then both are kept", async () => {
     // Given — two review conversations for the same spec
     const db = createFixture(dbPath);
     seedMarker(db, { capture_id: SPEC, label: "specify", conversation_id: "c1", start_ts: "2026-06-30 10:00:00.000000" });
@@ -82,7 +83,7 @@ describe("§9.7 extractBundle tally", () => {
     seedMarker(db, { capture_id: SPEC, label: "review", conversation_id: "c4", start_ts: "2026-06-30 13:00:00.000000" });
 
     // When
-    const { bundle, summary } = extractBundle(new WarpConversationReader(fakeSource(db)), SPEC);
+    const { bundle, summary } = await extractBundle(new WarpConversationReader(fakeSource(db)), SPEC);
 
     // Then — both re-run conversations kept, still complete
     expect(bundle).not.toBeNull();
@@ -105,7 +106,7 @@ describe("§9.8 extractBundle ordering", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("Given events across labels at various timestamps, When extracted, Then they are ordered by start_ts with a monotonic seq and the correct label per conversation", () => {
+  it("Given events across labels at various timestamps, When extracted, Then they are ordered by start_ts with a monotonic seq and the correct label per conversation", async () => {
     // Given — out-of-insertion-order timestamps across all three labels and all reader kinds
     const db = createFixture(dbPath);
     // specify conversation c1
@@ -121,7 +122,7 @@ describe("§9.8 extractBundle ordering", () => {
     seedQuery(db, { conversation_id: "c3", start_ts: "2026-06-30 11:10:00.000000", text: "gate query" });
 
     // When
-    const { bundle } = extractBundle(new WarpConversationReader(fakeSource(db)), SPEC);
+    const { bundle } = await extractBundle(new WarpConversationReader(fakeSource(db)), SPEC);
 
     // Then — non-decreasing timestamps and a 1..N monotonic sequence
     const events = bundle!.events;
@@ -167,11 +168,11 @@ function specReadWith(
 }
 
 function fakeReader(read: CaptureRead): ConversationReader {
-  return { readCapture: () => read };
+  return { readCapture: async () => read };
 }
 
 function throwingReader(error: Error): ConversationReader {
-  return { readCapture: () => { throw error; } };
+  return { readCapture: async () => { throw error; } };
 }
 
 function storedBundle(
@@ -199,7 +200,7 @@ function storedBundle(
 }
 
 describe("§9.17 extractBundle merge + fresh-read-error fallback", () => {
-  it("Given a stored specify bundle and a fresh implement read, When extracted with existingBundle, Then the merged result has both labels and no fresh_read_error", () => {
+  it("Given a stored specify bundle and a fresh implement read, When extracted with existingBundle, Then the merged result has both labels and no fresh_read_error", async () => {
     // Given — specify captured at close (stored); fresh read has implement only
     const existing = storedBundle("specify", "c1", [
       { ts: "2026-07-14 09:00:00.000000", content: "spec it" },
@@ -209,7 +210,7 @@ describe("§9.17 extractBundle merge + fresh-read-error fallback", () => {
     );
 
     // When
-    const { bundle, summary } = extractBundle(reader, SPEC, { existingBundle: existing });
+    const { bundle, summary } = await extractBundle(reader, SPEC, { existingBundle: existing });
 
     // Then — both labels present (specify from disk, implement from live)
     expect(bundle).not.toBeNull();
@@ -218,7 +219,7 @@ describe("§9.17 extractBundle merge + fresh-read-error fallback", () => {
     expect(bundle!.events).toHaveLength(2);
   });
 
-  it("Given a reader that throws and a stored bundle, When extracted, Then it degrades to stored-only with a fresh_read_error warning", () => {
+  it("Given a reader that throws and a stored bundle, When extracted, Then it degrades to stored-only with a fresh_read_error warning", async () => {
     // Given — fresh read fails (DB locked); stored bundle has specify + implement
     const existing = storedBundle("specify", "c1", [
       { ts: "2026-07-14 09:00:00.000000", content: "spec it" },
@@ -226,7 +227,7 @@ describe("§9.17 extractBundle merge + fresh-read-error fallback", () => {
     const reader = throwingReader(new Error("database is locked"));
 
     // When
-    const { bundle, summary } = extractBundle(reader, SPEC, { existingBundle: existing });
+    const { bundle, summary } = await extractBundle(reader, SPEC, { existingBundle: existing });
 
     // Then — stored bundle preserved intact, fresh_read_error set
     expect(bundle).not.toBeNull();
@@ -235,15 +236,31 @@ describe("§9.17 extractBundle merge + fresh-read-error fallback", () => {
     expect(bundle!.header.labels).toEqual(existing.header.labels);
   });
 
-  it("Given a reader that throws and no stored bundle, When extracted, Then it throws (first capture cannot recover)", () => {
+  it("Given a reader that throws and no stored bundle, When extracted, Then it throws (first capture cannot recover)", async () => {
     // Given — fresh read fails, nothing on disk to fall back on
     const reader = throwingReader(new Error("database is locked"));
 
     // When / Then
-    expect(() => extractBundle(reader, SPEC)).toThrow("fresh read failed");
+    await expect(extractBundle(reader, SPEC)).rejects.toThrow("fresh read failed");
   });
 
-  it("Given an existing bundle and --no-merge, When extracted, Then the result is fresh only (stored labels not recovered)", () => {
+  it("Given a reader whose source refuses access and a stored bundle, When extracted, Then the access error propagates instead of degrading to the stored bundle", async () => {
+    // Given
+    const existing = storedBundle("specify", "c1", [
+      { ts: "2026-07-14 09:00:00.000000", content: "spec it" },
+    ]);
+    const reader = throwingReader(new SourceAccessError("Langfuse API 401 at https://cloud.langfuse.com"));
+
+    // When
+    const extraction = extractBundle(reader, SPEC, { existingBundle: existing });
+
+    // Then
+    await expect(extraction).rejects.toThrow(
+      new SourceAccessError("Langfuse API 401 at https://cloud.langfuse.com")
+    );
+  });
+
+  it("Given an existing bundle and --no-merge, When extracted, Then the result is fresh only (stored labels not recovered)", async () => {
     // Given — stored specify; fresh read has implement; --no-merge replaces
     const existing = storedBundle("specify", "c1", [
       { ts: "2026-07-14 09:00:00.000000", content: "spec it" },
@@ -253,7 +270,7 @@ describe("§9.17 extractBundle merge + fresh-read-error fallback", () => {
     );
 
     // When
-    const { bundle } = extractBundle(reader, SPEC, {
+    const { bundle } = await extractBundle(reader, SPEC, {
       existingBundle: existing,
       noMerge: true,
     });

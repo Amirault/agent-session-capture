@@ -10,6 +10,7 @@ import type {
   SessionGather,
 } from "../domain/ports.js";
 import { parseSinceUtc, parseStampUtc } from "../domain/stamps.js";
+import { shouldGather } from "../domain/skipUnchanged.js";
 import { findSeeds } from "./readers/markerReader.js";
 import { readQueries } from "./readers/queryReader.js";
 import { readBlocks } from "./readers/blockReader.js";
@@ -32,7 +33,7 @@ import { readTasks } from "./readers/taskReader.js";
 export class WarpConversationReader implements ConversationReader, SessionReader {
   constructor(private readonly source: ConversationSource) {}
 
-  readCapture(captureId: string): CaptureRead {
+  async readCapture(captureId: string): Promise<CaptureRead> {
     return this.source.withSnapshot((db) => {
       const seeds = findSeeds(db, captureId);
       const unbindable = seeds.filter((s) => s.status === "unbindable");
@@ -77,7 +78,7 @@ export class WarpConversationReader implements ConversationReader, SessionReader
    * order, one conversation at a time — marker commands appear as ordinary
    * command events, with no special-casing.
    */
-  readSessions(options: ReadSessionsOptions): SessionsRead {
+  async readSessions(options: ReadSessionsOptions): Promise<SessionsRead> {
     return this.source.withSnapshot((db) => {
       let selected = enumerateSessions(db);
 
@@ -141,20 +142,4 @@ function enumerateSessions(db: ReadableDb): SessionInfo[] {
     conversation_id: row.conversation_id,
     last_modified: row.last_modified,
   }));
-}
-
-/**
- * Skip-unchanged: gather unless the stored header's stamp equals the fresh
- * stamp (raw string equality — the stamps never change representation). New
- * conversations, `null` stamps (no durable stamp — always re-extract) and the
- * `--conversation` debug filter are always gathered.
- */
-function shouldGather(info: SessionInfo, options: ReadSessionsOptions): boolean {
-  if (options.conversation !== undefined && options.conversation === info.conversation_id) {
-    return true;
-  }
-  if (info.last_modified === null) return true;
-  const stored = options.storedByCid.get(info.conversation_id);
-  if (stored === undefined) return true;
-  return stored.last_modified !== info.last_modified;
 }

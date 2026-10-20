@@ -1,8 +1,17 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { EventDraft, Label, SkippedRow } from "../domain/models.js";
-import type { ConversationReader, CaptureRead } from "../domain/ports.js";
+import type { EventDraft, Label, SessionInfo, SkippedRow } from "../domain/models.js";
+import type {
+  ConversationReader,
+  ReadSessionsOptions,
+  SessionGather,
+  SessionReader,
+  SessionsRead,
+  CaptureRead,
+} from "../domain/ports.js";
+import { parseSinceUtc } from "../domain/stamps.js";
+import { shouldGather } from "../domain/skipUnchanged.js";
 import { parseMarker } from "./readers/markerReader.js";
 
 export interface ClaudeCodeTranscriptReaderOptions {
@@ -22,14 +31,23 @@ interface MarkerHit {
   start_ts: string;
 }
 
-export class ClaudeCodeTranscriptReader implements ConversationReader {
+/** A session stamp from file mtimes: never `null` (a file always has one). */
+type StampedSession = SessionInfo & { last_modified: string };
+
+/** One Claude Code session: its `<session>.jsonl` plus `<session>/subagents/agent-*.jsonl`. */
+interface SessionFiles {
+  info: StampedSession;
+  files: string[];
+}
+
+export class ClaudeCodeTranscriptReader implements ConversationReader, SessionReader {
   private readonly rootDir: string;
 
   constructor(options: ClaudeCodeTranscriptReaderOptions = {}) {
     this.rootDir = options.rootDir ?? path.join(os.homedir(), ".claude", "projects");
   }
 
-  readCapture(captureId: string): CaptureRead {
+  async readCapture(captureId: string): Promise<CaptureRead> {
     const files = listJsonlFiles(this.rootDir);
     const records: JsonlRecord[] = [];
     const skipped: SkippedRow[] = [];
@@ -65,6 +83,88 @@ export class ClaudeCodeTranscriptReader implements ConversationReader {
       heuristic_bindings: [],
     };
   }
+
+  /**
+   * Session mode (`--sessions`): one session per `sessionId` — the
+   * `<session>.jsonl` transcript plus its `<session>/subagents/agent-*.jsonl`
+   * files, so subagent events join their parent. `last_modified` is the latest
+   * mtime of those files (ISO-8601 UTC); the `--since`/`--conversation`
+   * filters and skip-unchanged mirror the Warp reader. Gathering reuses the
+   * marker-mode record mapping, with the session as the only bound conversation.
+   */
+  async readSessions(options: ReadSessionsOptions): Promise<SessionsRead> {
+    let selected = enumerateSessions(this.rootDir);
+
+    if (options.conversation !== undefined) {
+      selected = selected.filter((s) => s.info.conversation_id === options.conversation);
+    }
+    if (options.since !== undefined) {
+      const cutoff = parseSinceUtc(options.since);
+      if (cutoff !== null) {
+        selected = selected.filter((s) => Date.parse(s.info.last_modified) >= cutoff);
+      }
+    }
+
+    const reads = new Map<string, SessionGather>();
+    for (const session of selected) {
+      if (!shouldGather(session.info, options)) continue;
+      reads.set(session.info.conversation_id, gatherSession(session, this.rootDir));
+    }
+
+    return { source: "claude-code", sessions: selected.map((s) => s.info), reads };
+  }
+}
+
+/**
+ * Group every transcript file by its session id: `<session>.jsonl` and
+ * `<session>/subagents/agent-*.jsonl` share one. Deterministic order: by
+ * stamp, tiebreak on id (the Warp enumeration order).
+ */
+function enumerateSessions(rootDir: string): SessionFiles[] {
+  const filesBySession = new Map<string, string[]>();
+  for (const filePath of listJsonlFiles(rootDir)) {
+    const sessionId = sessionIdOfFile(filePath);
+    filesBySession.set(sessionId, [...(filesBySession.get(sessionId) ?? []), filePath]);
+  }
+  return [...filesBySession]
+    .map(([conversation_id, files]) => ({
+      info: {
+        conversation_id,
+        last_modified: new Date(Math.max(...files.map((f) => fs.statSync(f).mtimeMs))).toISOString(),
+      },
+      files,
+    }))
+    .sort(byStampThenId);
+}
+
+function byStampThenId(a: SessionFiles, b: SessionFiles): number {
+  return (
+    compareText(a.info.last_modified, b.info.last_modified) ||
+    compareText(a.info.conversation_id, b.info.conversation_id)
+  );
+}
+
+/** Code-unit order (not `localeCompare`): stamps and ids sort byte-wise. */
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Map every record of the session's files, the session as the only bound conversation. */
+function gatherSession(session: SessionFiles, rootDir: string): SessionGather {
+  const boundCids = new Set([session.info.conversation_id]);
+  const skipped: SkippedRow[] = [];
+  const drafts = session.files.flatMap((filePath) => {
+    const read = readJsonl(filePath);
+    skipped.push(...read.skipped);
+    return read.records.flatMap((record) => draftsFromRecord(record, boundCids, new Set(), rootDir, skipped));
+  });
+  return { drafts, skipped, last_modified: session.info.last_modified };
+}
+
+function sessionIdOfFile(filePath: string): string {
+  const parent = path.dirname(filePath);
+  if (path.basename(parent) === "subagents") return path.basename(path.dirname(parent));
+  return path.basename(filePath, ".jsonl");
 }
 
 function listJsonlFiles(rootDir: string): string[] {
@@ -137,7 +237,7 @@ function findMarkerHits(records: JsonlRecord[], captureId: string, splitSessions
     }
   }
 
-  return hits.sort((a, b) => (a.start_ts < b.start_ts ? -1 : a.start_ts > b.start_ts ? 1 : 0));
+  return hits.sort((a, b) => compareText(a.start_ts, b.start_ts));
 }
 
 function multiLabelSessions(markerHits: MarkerHit[]): Set<string> {

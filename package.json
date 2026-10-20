@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Export every coding-agent conversation tagged with an id \u2014 from Claude Code, Hermes or Warp \u2014 as one chronological JSONL, using a shareable CAPTURE_MARKER no-op.",
+  "description": "Export every coding-agent conversation tagged with an id \u2014 from Claude Code, Hermes, Warp or Langfuse \u2014 as one chronological JSONL, using a shareable CAPTURE_MARKER no-op.",
   "license": "MIT",
   "author": "Tony Amirault",
   "repository": {
@@ -15,6 +15,7 @@
     "claude-code",
     "warp",
     "hermes",
+    "langfuse",
     "session-capture",
     "transcripts",
     "observability"
@@ -30,6 +31,7 @@
     "node": ">=22.2.0"
   },
   "dependencies": {
+    "@langfuse/client": "6.0.1",
     "better-sqlite3": "13.0.3",
     "zod": "4.6.5"
   },

@@ -90,7 +90,7 @@ describe("ClaudeCodeTranscriptReader", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("Given Claude Code JSONL transcripts with spec markers, When extracted, Then conversations are grouped by label with Claude events preserved", () => {
+  it("Given Claude Code JSONL transcripts with spec markers, When extracted, Then conversations are grouped by label with Claude events preserved", async () => {
     // Given — one Claude Code session per label, each bound by the existing CAPTURE_MARKER no-op command.
     writeTranscript(claudeRoot, "session-specify", [
       userEntry("session-specify", "u1", "2026-06-30T09:00:00.000Z", `please specify ${SPEC}`),
@@ -117,7 +117,7 @@ describe("ClaudeCodeTranscriptReader", () => {
     ]);
 
     // When
-    const { bundle, summary } = extractBundle(new ClaudeCodeTranscriptReader({ rootDir: claudeRoot }), SPEC);
+    const { bundle, summary } = await extractBundle(new ClaudeCodeTranscriptReader({ rootDir: claudeRoot }), SPEC);
 
     // Then
     expect(bundle).not.toBeNull();
@@ -201,7 +201,7 @@ describe("ClaudeCodeTranscriptReader", () => {
     expect(eventLines.map((line) => JSON.parse(line)).some((event) => event.kind === "tool_call")).toBe(true);
   });
 
-  it("Given a Claude Code transcript only mentions the marker in a prompt, When extracted, Then it is not bound as a captured label", () => {
+  it("Given a Claude Code transcript only mentions the marker in a prompt, When extracted, Then it is not bound as a captured label", async () => {
     // Given — Claude Code records failed unauthenticated prompts too; a text mention
     // must not count as the label marker unless Claude actually emitted the Bash tool_use.
     writeTranscript(claudeRoot, "session-mention-only", [
@@ -212,7 +212,7 @@ describe("ClaudeCodeTranscriptReader", () => {
     ]);
 
     // When
-    const { bundle, summary } = extractBundle(new ClaudeCodeTranscriptReader({ rootDir: claudeRoot }), SPEC);
+    const { bundle, summary } = await extractBundle(new ClaudeCodeTranscriptReader({ rootDir: claudeRoot }), SPEC);
 
     // Then
     expect(bundle).not.toBeNull();
@@ -222,7 +222,7 @@ describe("ClaudeCodeTranscriptReader", () => {
     expect(summary.events).toBe(0);
   });
 
-  it("Given a marker-shaped command field on a non-Bash tool_use, When extracted, Then it is not bound", () => {
+  it("Given a marker-shaped command field on a non-Bash tool_use, When extracted, Then it is not bound", async () => {
     // Given — CAPTURE_MARKER is a shell no-op; only Bash tool_use blocks prove it was emitted.
     writeTranscript(claudeRoot, "session-non-bash", [
       assistantEntry("session-non-bash", "a1", "2026-06-30T09:00:00.000Z", [
@@ -231,14 +231,14 @@ describe("ClaudeCodeTranscriptReader", () => {
     ]);
 
     // When
-    const { summary } = extractBundle(new ClaudeCodeTranscriptReader({ rootDir: claudeRoot }), SPEC);
+    const { summary } = await extractBundle(new ClaudeCodeTranscriptReader({ rootDir: claudeRoot }), SPEC);
 
     // Then
     expect(summary.conversations).toBe(0);
     expect(summary.events).toBe(0);
   });
 
-  it("Given a marker-shaped Bash tool_use outside an assistant turn, When extracted, Then it is not bound", () => {
+  it("Given a marker-shaped Bash tool_use outside an assistant turn, When extracted, Then it is not bound", async () => {
     // Given — Claude emits tool_use blocks from assistant turns; user/tool-result turns must not seed labels.
     writeTranscript(claudeRoot, "session-user-tool-use", [
       userEntry("session-user-tool-use", "u1", "2026-06-30T09:00:00.000Z", [
@@ -247,13 +247,13 @@ describe("ClaudeCodeTranscriptReader", () => {
     ]);
 
     // When
-    const { summary } = extractBundle(new ClaudeCodeTranscriptReader({ rootDir: claudeRoot }), SPEC);
+    const { summary } = await extractBundle(new ClaudeCodeTranscriptReader({ rootDir: claudeRoot }), SPEC);
 
     // Then
     expect(summary.conversations).toBe(0);
     expect(summary.events).toBe(0);
   });
-  it("Given a bound session interleaved with timestamp-less metadata records, When extracted, Then only message records lacking a timestamp are reported as skipped", () => {
+  it("Given a bound session interleaved with timestamp-less metadata records, When extracted, Then only message records lacking a timestamp are reported as skipped", async () => {
     // Given — Claude Code appends session metadata (custom-title, last-prompt,
     // file-history-snapshot, …) without a timestamp; they are not events.
     const sessionId = "session-metadata";
@@ -268,14 +268,14 @@ describe("ClaudeCodeTranscriptReader", () => {
     ]);
 
     // When
-    const { summary } = extractBundle(new ClaudeCodeTranscriptReader({ rootDir: claudeRoot }), SPEC);
+    const { summary } = await extractBundle(new ClaudeCodeTranscriptReader({ rootDir: claudeRoot }), SPEC);
 
     // Then
     expect(summary.conversations).toBe(1);
     expect(summary.skipped_rows.map((row) => row.reason)).toEqual(["missing timestamp"]);
   });
 
-  it("Given one Claude Code session whose implement and review subagents emit their own label markers, When extracted, Then each subagent transcript is bound to its label", () => {
+  it("Given one Claude Code session whose implement and review subagents emit their own label markers, When extracted, Then each subagent transcript is bound to its label", async () => {
     // Given — an autonomous-workflow run: both subagents share the parent sessionId
     // and differ only by their agentId.
     const sessionId = "session-autonomous";
@@ -294,7 +294,7 @@ describe("ClaudeCodeTranscriptReader", () => {
     ]);
 
     // When
-    const { bundle, summary } = extractBundle(new ClaudeCodeTranscriptReader({ rootDir: claudeRoot }), SPEC);
+    const { bundle, summary } = await extractBundle(new ClaudeCodeTranscriptReader({ rootDir: claudeRoot }), SPEC);
 
     // Then
     expect(bundle).not.toBeNull();
@@ -303,7 +303,7 @@ describe("ClaudeCodeTranscriptReader", () => {
     expect(summary.skipped_rows.map((row) => row.reason)).not.toContain("same session has markers for multiple labels");
   });
 
-  it("Given a single-label Claude Code session with a marker-less subagent, When extracted, Then the subagent transcript binds under the plain sessionId", () => {
+  it("Given a single-label Claude Code session with a marker-less subagent, When extracted, Then the subagent transcript binds under the plain sessionId", async () => {
     // Given — a manual implement session delegating a refactoring pass to a subagent.
     const sessionId = "session-manual-implement";
     writeTranscript(claudeRoot, sessionId, [
@@ -318,7 +318,7 @@ describe("ClaudeCodeTranscriptReader", () => {
     ]);
 
     // When
-    const { bundle } = extractBundle(new ClaudeCodeTranscriptReader({ rootDir: claudeRoot }), SPEC);
+    const { bundle } = await extractBundle(new ClaudeCodeTranscriptReader({ rootDir: claudeRoot }), SPEC);
 
     // Then
     expect(bundle!.header.conversation_ids).toEqual([sessionId]);
@@ -329,12 +329,12 @@ describe("ClaudeCodeTranscriptReader", () => {
     }));
   });
 
-  it("Given a transcript root that does not exist, When read, Then a skipped row names the missing directory", () => {
+  it("Given a transcript root that does not exist, When read, Then a skipped row names the missing directory", async () => {
     // Given
     const reader = new ClaudeCodeTranscriptReader({ rootDir: "/nonexistent/claude-root" });
 
     // When
-    const read = reader.readCapture("any");
+    const read = await reader.readCapture("any");
 
     // Then
     expect(read.labelByCid.size).toBe(0);

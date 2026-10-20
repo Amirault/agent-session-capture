@@ -4,7 +4,7 @@
 
 ### Tag an AI coding session. Get the whole conversation back.
 
-Claude Code · Hermes · Warp → one chronological, greppable JSONL.
+Claude Code · Hermes · Warp · Langfuse → one chronological, greppable JSONL.
 
 [![CI](https://github.com/Amirault/agent-session-capture/actions/workflows/ci.yml/badge.svg)](https://github.com/Amirault/agent-session-capture/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -61,7 +61,7 @@ session is tagged. Repeat in every session of the same task, with the **same nam
 # wrote /your/project/.agent-captures/checkout-bug.jsonl (199 events, 3 conversations)
 ```
 
-`--source` is `claude-code`, `hermes` or `warp`.
+`--source` is `claude-code`, `hermes`, `warp` or `langfuse`.
 
 **3 · Read it** — it's plain JSONL:
 
@@ -116,7 +116,9 @@ It is **incremental**: a re-run reads only the conversations whose last-activity
 and leaves every other file untouched. It is **decay-safe**: a re-read merges with the stored
 file, so events the store has since evicted stay recoverable. `--since <ISO-8601>` narrows the
 run to recent conversations, `--conversation <cid>` picks exactly one, and `--no-merge` replaces
-stored files instead of merging. Warp only, for now.
+stored files instead of merging. Every source supports it: a Claude Code session joins its
+subagents, a Hermes session its compression continuations and delegate subagents, a Langfuse
+session every trace that carries its `sessionId`.
 
 The marker stays the default — it groups sessions *by task*, which a bare export cannot.
 Full reference: [docs/REFERENCE.md](docs/REFERENCE.md#session-mode).
@@ -128,6 +130,7 @@ Full reference: [docs/REFERENCE.md](docs/REFERENCE.md#session-mode).
 | ------------- | -------------------------------------------------------- | ----------------------------------------------------------- |
 | `claude-code` | `~/.claude/projects/**/*.jsonl`                          | Subagent transcripts join their parent session.             |
 | `hermes`      | `<HERMES_HOME>/state.db` (SQLite, read-only)             | Compression continuations and delegate subagents followed.  |
+| `langfuse`    | A Langfuse project, v2 observations API (read-only)      | Sessions of agents that trace to Langfuse, e.g. on a server. |
 | `warp`        | Warp's local SQLite DB (macOS), via a read-only snapshot | Recovers assistant text from protobuf blobs, schema-less.   |
 
 Your agent isn't listed? [Write the next adapter](docs/ADAPTERS.md) — one small
@@ -200,7 +203,9 @@ the **main checkout's** `.agent-captures/`, so they outlive the worktree.
 
 - Live stores are opened **read-only** — Warp through a `VACUUM INTO` snapshot deleted afterwards,
   Hermes through one read-only transaction; Claude Code transcripts are plain files.
-- Nothing is sent anywhere. The only thing written is `.agent-captures/<id>.jsonl`.
+- Nothing is sent anywhere. The only thing written is `.agent-captures/<id>.jsonl`. The
+  `langfuse` source only reads your project (`GET` requests to `LANGFUSE_HOST` with your keys,
+  taken from `LANGFUSE_*` or `~/.config/langfuse/capture.env`, never printed).
 - Bundles hold your **raw prompts and tool output**: add `.agent-captures/` to your project's
   `.gitignore` and review a bundle before sharing it.
 

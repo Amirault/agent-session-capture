@@ -96,7 +96,7 @@ export interface ReaderResult {
 }
 
 /** First line of every bundle file. */
-export type BundleSource = "warp" | "claude-code" | "hermes";
+export type BundleSource = "warp" | "claude-code" | "hermes" | "langfuse";
 
 export interface BundleHeader {
   type: "bundle_header";

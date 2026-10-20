@@ -20,7 +20,7 @@ describe("§9.12 WarpConversationReader — spec binding + event gathering", () 
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("Given a bound conversation plus an unbindable marker, When readCapture, Then labelByCid binds the conversation, drafts hold its events, and the unbindable marker is surfaced", () => {
+  it("Given a bound conversation plus an unbindable marker, When readCapture, Then labelByCid binds the conversation, drafts hold its events, and the unbindable marker is surfaced", async () => {
     // Given — one bound specify conversation (c1) with a query, plus an unbindable implement marker
     const db = createFixture(dbPath);
     seedMarker(db, { capture_id: SPEC, label: "specify", conversation_id: "c1", start_ts: "2026-06-30 10:00:00.000000" });
@@ -31,7 +31,7 @@ describe("§9.12 WarpConversationReader — spec binding + event gathering", () 
     );
 
     // When
-    const read = new WarpConversationReader(fakeSource(db)).readCapture(SPEC);
+    const read = await new WarpConversationReader(fakeSource(db)).readCapture(SPEC);
 
     // Then — c1 bound to specify; its query plus the marker's binding block are
     // gathered (queries before blocks), and the implement marker is unbindable.

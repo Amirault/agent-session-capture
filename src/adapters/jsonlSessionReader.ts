@@ -63,23 +63,12 @@ function parseHeaderLine(line: string | null, filePath: string): SessionHeader {
   return header;
 }
 
-function guard(
-  outcome: ScanOutcome,
-  source: BundleSource
-): { ok: true; header: SessionHeader } | { ok: false; error: string } {
+function guard(outcome: ScanOutcome): { ok: true; header: SessionHeader } | { ok: false; error: string } {
   let header: SessionHeader;
   try {
     header = parseHeaderLine(readFirstLine(outcome.path), outcome.path);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
-  if (header.source !== source) {
-    return {
-      ok: false,
-      error:
-        `session file source mismatch: file "${outcome.path}" has source "${header.source}", ` +
-        `run requested "${source}" — refusing to merge across sources`,
-    };
   }
   if (sessionFileName(header.conversation_id) !== outcome.fileName) {
     return {
@@ -96,20 +85,28 @@ function guard(
  * Scan `<outDir>/sessions/*.jsonl`, reading each file's FIRST LINE only
  * (files can be MBs; a full parse is only needed for merging).
  *
- * Guards mirror the marker mode's stored-bundle guards: a corrupt file, a
- * source mismatch, or a header-vs-filename conversation mismatch fails the
- * run loudly (nothing is silently dropped) — unless `noMerge`, where each
- * violation is downgraded to a warning and the entry is skipped (the file is
- * replaced by the fresh write when its conversation is enumerated).
+ * Guards mirror the marker mode's stored-bundle guards: a corrupt file or a
+ * header-vs-filename conversation mismatch fails the run loudly (nothing is
+ * silently dropped) — unless `noMerge`, where each violation is downgraded to
+ * a warning and the entry is skipped (the file is replaced by the fresh write
+ * when its conversation is enumerated). The local sources share one
+ * `sessions/` directory, so a file of another source is set aside in
+ * `otherSources`, not an error: it only conflicts if this run gathers its
+ * conversation (`sourceMismatch`).
  */
 export function scanStoredSessions(
   sessionsDir: string,
   opts: { source: BundleSource; noMerge: boolean }
-): { byCid: Map<string, StoredSessionEntry>; warnings: string[] } {
+): {
+  byCid: Map<string, StoredSessionEntry>;
+  otherSources: Map<string, StoredSessionEntry>;
+  warnings: string[];
+} {
   const byCid = new Map<string, StoredSessionEntry>();
+  const otherSources = new Map<string, StoredSessionEntry>();
   const warnings: string[] = [];
 
-  if (!fs.existsSync(sessionsDir)) return { byCid, warnings };
+  if (!fs.existsSync(sessionsDir)) return { byCid, otherSources, warnings };
 
   const fileNames = fs
     .readdirSync(sessionsDir)
@@ -120,7 +117,7 @@ export function scanStoredSessions(
     const filePath = path.join(sessionsDir, name);
     const outcome: ScanOutcome = { fileName: name.slice(0, -".jsonl".length), path: filePath };
 
-    const result = guard(outcome, opts.source);
+    const result = guard(outcome);
     if (!result.ok) {
       if (!opts.noMerge) {
         throw new Error(
@@ -132,6 +129,10 @@ export function scanStoredSessions(
     }
 
     const header = result.header;
+    if (header.source !== opts.source) {
+      otherSources.set(header.conversation_id, { fileName: outcome.fileName, path: filePath, header });
+      continue;
+    }
     const previous = byCid.get(header.conversation_id);
     if (previous !== undefined) {
       const error =
@@ -147,7 +148,15 @@ export function scanStoredSessions(
     byCid.set(header.conversation_id, { fileName: outcome.fileName, path: filePath, header });
   }
 
-  return { byCid, warnings };
+  return { byCid, otherSources, warnings };
+}
+
+/** The conflict of a run about to write a conversation whose stored file belongs to another source. */
+export function sourceMismatch(entry: StoredSessionEntry, source: BundleSource): string {
+  return (
+    `session file source mismatch: file "${entry.path}" has source "${entry.header.source}", ` +
+    `run requested "${source}" — refusing to merge across sources`
+  );
 }
 
 /**

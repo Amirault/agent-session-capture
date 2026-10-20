@@ -38,7 +38,7 @@ describe("CLI source selection", () => {
       // Then
       expect(result.status).toBe(2);
       expect(result.stderr).toContain(
-        'error: --source is required for extraction ("warp", "claude-code", or "hermes")'
+        'error: --source is required for extraction ("warp", "claude-code", "hermes", or "langfuse")'
       );
       expect(fs.readFileSync(outPath, "utf8")).toBe(sentinel);
     } finally {
