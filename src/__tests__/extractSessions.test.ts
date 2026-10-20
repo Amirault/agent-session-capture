@@ -260,6 +260,30 @@ describe("§9.21 extractSessions use case — incremental, decay-safe session ex
     expect(readSessionFile(outDir, "c2").header.source).toBe("warp");
   });
 
+  it("Given a stored session file of another source for a conversation this source does not hold (claude-code and warp sharing one store), When extractSessions runs, Then it succeeds and leaves that file untouched", async () => {
+    // Given
+    const reader = new WarpConversationReader(fakeSource(db));
+    fs.mkdirSync(sessionsDirOf(outDir), { recursive: true });
+    const otherHeader = JSON.stringify({
+      type: "session_header",
+      conversation_id: "0de8452a-214b-405a-b979-46981d093287",
+      source: "claude-code",
+      last_modified: "2026-10-20T19:11:00.759Z",
+      extracted_at: "2026-10-20T19:11:05.000Z",
+    });
+    const otherPath = path.join(sessionsDirOf(outDir), "0de8452a-214b-405a-b979-46981d093287.jsonl");
+    fs.writeFileSync(otherPath, `${otherHeader}\n`, "utf8");
+
+    // When
+    const { summary } = await extractSessions(reader, { outDir, source: "warp" });
+
+    // Then
+    expect(summary.written.map((w) => w.conversation_id).sort()).toEqual(["c1", "c2", "c3"]);
+    expect(summary.untouched).toEqual([]);
+    expect(summary.warnings).toEqual([]);
+    expect(fs.readFileSync(otherPath, "utf8")).toBe(`${otherHeader}\n`);
+  });
+
   it("Given a stored file whose header conversation_id does not match its filename, When extractSessions re-runs, Then it refuses loudly (collision/tampering) and touches nothing", async () => {
     // Given
     const reader = new WarpConversationReader(fakeSource(db));

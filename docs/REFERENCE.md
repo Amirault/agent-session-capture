@@ -361,9 +361,11 @@ events primary, stored events fill gaps left by ring-buffer eviction), then
   record, never GC'd.
 
 Guards mirror the marker mode's stored-bundle guards: a corrupt session file, a
-source mismatch, or a header-vs-filename conversation mismatch fails the run
-loudly (nothing overwritten) unless `--no-merge` downgrades each violation to a
-warning and replaces the file. Guard warnings and skipped rows are reported one
+header-vs-filename conversation mismatch, or a file of another source for a
+conversation this run gathers fails the run loudly (nothing overwritten) unless
+`--no-merge` downgrades each violation to a warning and replaces the file. The
+local sources share `sessions/`: a file of another source is otherwise left
+untouched. Guard warnings and skipped rows are reported one
 per line, never as bare counts.
 
 ### Session exit codes

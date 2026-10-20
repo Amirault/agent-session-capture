@@ -12,7 +12,7 @@ import type { SessionReader } from "../domain/ports.js";
 import { causalSortTimestamp } from "../domain/causalSort.js";
 import { mergeEventLists } from "../domain/mergeBundle.js";
 import { JsonlSink } from "../adapters/jsonlSink.js";
-import { loadStoredSession, scanStoredSessions } from "../adapters/jsonlSessionReader.js";
+import { loadStoredSession, scanStoredSessions, sourceMismatch } from "../adapters/jsonlSessionReader.js";
 
 export interface ExtractSessionsOptions {
   /** Output directory (session files land in `<outDir>/sessions/`). */
@@ -64,10 +64,12 @@ function toSessionEvents(drafts: EventDraft[]): SessionEvent[] {
  *
  * 1. Scan `<outDir>/sessions/*.jsonl` — each file's FIRST line only (files can
  *    be MBs; a full parse is only needed for merging). Guards mirror the marker
- *    mode's stored-bundle guards: corrupt / source-mismatch /
- *    header-vs-filename conversation mismatch fails the run loudly, nothing
- *    overwritten — unless `--no-merge` downgrades each violation to a warning
- *    and replaces the file.
+ *    mode's stored-bundle guards: corrupt / header-vs-filename conversation
+ *    mismatch fails the run loudly, nothing overwritten — unless `--no-merge`
+ *    downgrades each violation to a warning and replaces the file. A file of
+ *    another source (the local sources share `sessions/`) is left alone,
+ *    unless this run gathers its conversation: then the source mismatch fails
+ *    the run the same way.
  * 2. `reader.readSessions({ since, conversation, storedByCid })` — one source
  *    snapshot for the whole run; the reader skips conversations whose stored
  *    `last_modified` stamp is unchanged.
@@ -92,11 +94,21 @@ export async function extractSessions(
   const sessionsDir = path.join(outDir, "sessions");
 
   // 1. Scan the stored sessions: first-line headers only, guarded.
-  const { byCid: storedByEntry, warnings } = scanStoredSessions(sessionsDir, { source, noMerge });
+  const { byCid: storedByEntry, otherSources, warnings } = scanStoredSessions(sessionsDir, { source, noMerge });
   const storedByCid = new Map([...storedByEntry].map(([cid, entry]) => [cid, entry.header]));
 
   // 2. Fresh read: one snapshot; only changed conversations are gathered.
   const { sessions, reads } = await reader.readSessions({ since, conversation, storedByCid });
+  for (const cid of reads.keys()) {
+    const other = otherSources.get(cid);
+    if (other === undefined) continue;
+    if (!noMerge) {
+      throw new Error(
+        `${sourceMismatch(other, source)} — refusing to continue; fix or remove the file, or re-run with --no-merge to replace it`
+      );
+    }
+    warnings.push(`replacing stored session (--no-merge): ${sourceMismatch(other, source)}`);
+  }
 
   // 3. Build every session in memory first (loads + merges); writes come after,
   //    so any failure leaves every file on disk untouched.
