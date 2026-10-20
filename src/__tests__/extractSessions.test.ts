@@ -72,11 +72,11 @@ describe("§9.21 extractSessions use case — incremental, decay-safe session ex
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("Given a store with three conversations and no markers, When extractSessions runs on a fresh outDir, Then one file per conversation is written with a session_header on line 1, chronological events, seq 1..N, and no capture_id/label", () => {
+  it("Given a store with three conversations and no markers, When extractSessions runs on a fresh outDir, Then one file per conversation is written with a session_header on line 1, chronological events, seq 1..N, and no capture_id/label", async () => {
     // Given — fixture seeded in beforeEach; no CAPTURE_MARKER anywhere
 
     // When
-    const { summary } = extractSessions(new WarpConversationReader(fakeSource(db)), { outDir, source: "warp" });
+    const { summary } = await extractSessions(new WarpConversationReader(fakeSource(db)), { outDir, source: "warp" });
 
     // Then — accounting
     expect(summary.enumerated).toBe(3);
@@ -112,14 +112,14 @@ describe("§9.21 extractSessions use case — incremental, decay-safe session ex
     expect(c3.events.map((e) => e.kind)).toEqual(["agent_message"]);
   });
 
-  it("Given a completed first run, When extractSessions re-runs with no store changes, Then nothing is rewritten (content and mtimes identical) and all sessions are reported unchanged", () => {
+  it("Given a completed first run, When extractSessions re-runs with no store changes, Then nothing is rewritten (content and mtimes identical) and all sessions are reported unchanged", async () => {
     // Given
     const reader = new WarpConversationReader(fakeSource(db));
-    extractSessions(reader, { outDir, source: "warp" });
+    await extractSessions(reader, { outDir, source: "warp" });
     const before = snapshotSessionsDir(sessionsDirOf(outDir));
 
     // When
-    const { summary } = extractSessions(reader, { outDir, source: "warp" });
+    const { summary } = await extractSessions(reader, { outDir, source: "warp" });
 
     // Then — no gather, no write, byte-identical files
     expect(summary.written).toEqual([]);
@@ -128,16 +128,16 @@ describe("§9.21 extractSessions use case — incremental, decay-safe session ex
     expect(snapshotSessionsDir(sessionsDirOf(outDir))).toEqual(before);
   });
 
-  it("Given a completed first run, When one conversation's stamp is bumped, Then only that session file is rewritten and the others stay byte-identical", () => {
+  it("Given a completed first run, When one conversation's stamp is bumped, Then only that session file is rewritten and the others stay byte-identical", async () => {
     // Given
     const reader = new WarpConversationReader(fakeSource(db));
-    extractSessions(reader, { outDir, source: "warp" });
+    await extractSessions(reader, { outDir, source: "warp" });
     const before = snapshotSessionsDir(sessionsDirOf(outDir));
 
     // When — c1's task row is touched (mutable last_modified_at)
     db.prepare("UPDATE agent_tasks SET last_modified_at = ? WHERE conversation_id = ?")
       .run("2026-06-30 11:00:00.000000", "c1");
-    const { summary } = extractSessions(reader, { outDir, source: "warp" });
+    const { summary } = await extractSessions(reader, { outDir, source: "warp" });
 
     // Then — exactly the changed session is rewritten
     expect(summary.written.map((w) => w.conversation_id)).toEqual(["c1"]);
@@ -157,17 +157,17 @@ describe("§9.21 extractSessions use case — incremental, decay-safe session ex
     expect(c1.events).toHaveLength(3);
   });
 
-  it("Given a completed first run, When a conversation's ai_queries rows are evicted and its stamp bumped, Then the evicted query events survive in the merged file (decay-safe)", () => {
+  it("Given a completed first run, When a conversation's ai_queries rows are evicted and its stamp bumped, Then the evicted query events survive in the merged file (decay-safe)", async () => {
     // Given
     const reader = new WarpConversationReader(fakeSource(db));
-    extractSessions(reader, { outDir, source: "warp" });
+    await extractSessions(reader, { outDir, source: "warp" });
     expect(readSessionFile(outDir, "c1").events.map((e) => e.kind)).toEqual(["query", "command", "agent_message"]);
 
     // When — Warp evicts c1's queries; the conversations stamp changes anyway
     db.prepare("DELETE FROM ai_queries WHERE conversation_id = ?").run("c1");
     db.prepare("UPDATE agent_conversations SET last_modified_at = ? WHERE conversation_id = ?")
       .run("2026-06-30 12:00:00.000000", "c1");
-    const { summary } = extractSessions(reader, { outDir, source: "warp" });
+    const { summary } = await extractSessions(reader, { outDir, source: "warp" });
 
     // Then — c1 re-gathered and re-merged: the evicted query is recovered from
     // the stored file; the fresh block + task dedup; nothing duplicated
@@ -180,14 +180,14 @@ describe("§9.21 extractSessions use case — incremental, decay-safe session ex
     expect(c1.events.map((e) => e.seq)).toEqual([1, 2, 3]);
   });
 
-  it("Given a completed first run, When extractSessions re-runs with --conversation for one cid, Then only that conversation is enumerated and force-rewritten, the other stored files staying untouched", () => {
+  it("Given a completed first run, When extractSessions re-runs with --conversation for one cid, Then only that conversation is enumerated and force-rewritten, the other stored files staying untouched", async () => {
     // Given
     const reader = new WarpConversationReader(fakeSource(db));
-    extractSessions(reader, { outDir, source: "warp" });
+    await extractSessions(reader, { outDir, source: "warp" });
     const before = snapshotSessionsDir(sessionsDirOf(outDir));
 
     // When
-    const { summary } = extractSessions(reader, { outDir, source: "warp", conversation: "c2" });
+    const { summary } = await extractSessions(reader, { outDir, source: "warp", conversation: "c2" });
 
     // Then — exactly one enumerated session, force-gathered despite the equal
     // stamp; the other stored files are kept untouched, never GC'd
@@ -201,30 +201,30 @@ describe("§9.21 extractSessions use case — incremental, decay-safe session ex
     expect(readSessionFile(outDir, "c2").events).toHaveLength(1);
   });
 
-  it("Given a corrupt stored session file, When extractSessions re-runs with the default merge, Then it throws loudly and overwrites nothing", () => {
+  it("Given a corrupt stored session file, When extractSessions re-runs with the default merge, Then it throws loudly and overwrites nothing", async () => {
     // Given
     const reader = new WarpConversationReader(fakeSource(db));
-    extractSessions(reader, { outDir, source: "warp" });
+    await extractSessions(reader, { outDir, source: "warp" });
     const before = snapshotSessionsDir(sessionsDirOf(outDir));
     const corruptPath = path.join(sessionsDirOf(outDir), "c2.jsonl");
     fs.writeFileSync(corruptPath, "not valid json\n", "utf8");
 
     // When / Then — the run refuses loudly, the corrupt file is left as-is
-    expect(() => extractSessions(reader, { outDir, source: "warp" })).toThrow(/corrupt session file/);
+    await expect(extractSessions(reader, { outDir, source: "warp" })).rejects.toThrow(/corrupt session file/);
     expect(fs.readFileSync(corruptPath, "utf8")).toBe("not valid json\n");
     const after = snapshotSessionsDir(sessionsDirOf(outDir));
     expect(after["c2.jsonl"]!.content).toBe("not valid json\n");
     expect(after["c1.jsonl"]).toEqual(before["c1.jsonl"]);
   });
 
-  it("Given a corrupt stored session file and --no-merge, When extractSessions re-runs, Then the file is replaced and the corruption is warned about one-per-line", () => {
+  it("Given a corrupt stored session file and --no-merge, When extractSessions re-runs, Then the file is replaced and the corruption is warned about one-per-line", async () => {
     // Given
     const reader = new WarpConversationReader(fakeSource(db));
-    extractSessions(reader, { outDir, source: "warp" });
+    await extractSessions(reader, { outDir, source: "warp" });
     fs.writeFileSync(path.join(sessionsDirOf(outDir), "c2.jsonl"), "not valid json\n", "utf8");
 
     // When
-    const { summary } = extractSessions(reader, { outDir, source: "warp", noMerge: true });
+    const { summary } = await extractSessions(reader, { outDir, source: "warp", noMerge: true });
 
     // Then — the corrupt entry is replaced by a fresh, valid write
     expect(summary.warnings.join("\n")).toContain("corrupt session file");
@@ -236,10 +236,10 @@ describe("§9.21 extractSessions use case — incremental, decay-safe session ex
     expect(c2.events.map((e) => e.kind)).toEqual(["query"]);
   });
 
-  it("Given a stored session file from another source, When extractSessions re-runs, Then the default merge refuses loudly; with --no-merge it warns and replaces", () => {
+  it("Given a stored session file from another source, When extractSessions re-runs, Then the default merge refuses loudly; with --no-merge it warns and replaces", async () => {
     // Given — a hermes-written file squatting in the warp sessions dir
     const reader = new WarpConversationReader(fakeSource(db));
-    extractSessions(reader, { outDir, source: "warp" });
+    await extractSessions(reader, { outDir, source: "warp" });
     const foreignHeader = JSON.stringify({
       type: "session_header",
       conversation_id: "c2",
@@ -251,19 +251,19 @@ describe("§9.21 extractSessions use case — incremental, decay-safe session ex
     fs.writeFileSync(foreignPath, `${foreignHeader}\n`, "utf8");
 
     // When / Then — default: refuse, leave the file untouched
-    expect(() => extractSessions(reader, { outDir, source: "warp" })).toThrow(/source mismatch/);
+    await expect(extractSessions(reader, { outDir, source: "warp" })).rejects.toThrow(/source mismatch/);
     expect(fs.readFileSync(foreignPath, "utf8")).toBe(`${foreignHeader}\n`);
 
     // And with --no-merge: warn, replace with a fresh warp file
-    const { summary } = extractSessions(reader, { outDir, source: "warp", noMerge: true });
+    const { summary } = await extractSessions(reader, { outDir, source: "warp", noMerge: true });
     expect(summary.warnings.join("\n")).toContain("source mismatch");
     expect(readSessionFile(outDir, "c2").header.source).toBe("warp");
   });
 
-  it("Given a stored file whose header conversation_id does not match its filename, When extractSessions re-runs, Then it refuses loudly (collision/tampering) and touches nothing", () => {
+  it("Given a stored file whose header conversation_id does not match its filename, When extractSessions re-runs, Then it refuses loudly (collision/tampering) and touches nothing", async () => {
     // Given
     const reader = new WarpConversationReader(fakeSource(db));
-    extractSessions(reader, { outDir, source: "warp" });
+    await extractSessions(reader, { outDir, source: "warp" });
     const mismatchHeader = JSON.stringify({
       type: "session_header",
       conversation_id: "c2",
@@ -275,18 +275,18 @@ describe("§9.21 extractSessions use case — incremental, decay-safe session ex
     fs.writeFileSync(mismatchPath, `${mismatchHeader}\n`, "utf8");
 
     // When / Then
-    expect(() => extractSessions(reader, { outDir, source: "warp" })).toThrow(/conversation mismatch/);
+    await expect(extractSessions(reader, { outDir, source: "warp" })).rejects.toThrow(/conversation mismatch/);
     expect(fs.readFileSync(mismatchPath, "utf8")).toBe(`${mismatchHeader}\n`);
   });
 
-  it("Given a conversation id with path separators, When extractSessions runs, Then the file name is sanitized into sessions/ with no directory escape", () => {
+  it("Given a conversation id with path separators, When extractSessions runs, Then the file name is sanitized into sessions/ with no directory escape", async () => {
     // Given — an evil cid that would escape the outDir if used verbatim
     const evilCid = "../../etc/escape";
     seedConversation(db, { conversation_id: evilCid, last_modified_at: "2026-06-30 10:00:00.000000" });
     seedQuery(db, { conversation_id: evilCid, start_ts: "2026-06-30 10:10:00.000000", text: "evil cid" });
 
     // When
-    const { summary } = extractSessions(new WarpConversationReader(fakeSource(db)), { outDir, source: "warp" });
+    const { summary } = await extractSessions(new WarpConversationReader(fakeSource(db)), { outDir, source: "warp" });
 
     // Then — the evil cid is written exactly once, as a flat, safe name directly
     // in sessions/ (alongside the seeded conversations, all flat)

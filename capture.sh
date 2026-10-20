@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # capture.sh — run agent-session-capture from any directory of your project.
 #
-# Usage: capture.sh --id <capture-id> --source warp|claude-code|hermes [cli flags...]
+# Usage: capture.sh --id <capture-id> --source warp|claude-code|hermes|langfuse [cli flags...]
+#        capture.sh --sessions --source warp|claude-code|hermes|langfuse [cli flags...]
 #
 # - Runs the CLI from the caller's working directory, so relative paths resolve
 #   relative to YOUR project, not to this tool.
@@ -9,7 +10,8 @@
 # - Defaults --out to <project>/.agent-captures, where <project> is the MAIN git checkout of
 #   the caller's repository: a capture made in a disposable git worktree survives its removal
 #   (the decay-safe merge reads that store). Outside git, ./.agent-captures is used.
-#   An explicit --out wins.
+#   --source langfuse uses its langfuse/ sub-store, so an id keeps one bundle per source
+#   (and --sessions files land in langfuse/sessions/). An explicit --out wins.
 # - Set AGENT_CAPTURE_NODE_RUNNER (e.g. "mise exec --") to run node through a version manager.
 set -euo pipefail
 
@@ -51,14 +53,23 @@ if [[ ! -x "${TOOL_DIR}/node_modules/.bin/tsx" ]]; then
 fi
 
 needs_default_out=1
+langfuse_source=0
+previous_arg=""
 for arg in "$@"; do
   case "${arg}" in
     --out | --out=* | -h | --help) needs_default_out=0 ;;
+    --source=langfuse) langfuse_source=1 ;;
+    langfuse) if [[ "${previous_arg}" == "--source" ]]; then langfuse_source=1; fi ;;
     *) ;;
   esac
+  previous_arg="${arg}"
 done
 if [[ "${needs_default_out}" -eq 1 ]]; then
-  set -- "$@" --out "$(default_store)"
+  store="$(default_store)"
+  if [[ "${langfuse_source}" -eq 1 ]]; then
+    store="${store}/langfuse"
+  fi
+  set -- "$@" --out "${store}"
 fi
 
 run "${TOOL_DIR}/node_modules/.bin/tsx" "${TOOL_DIR}/src/cli.ts" "$@"

@@ -42,7 +42,7 @@ export interface ConversationSink {
  * lives in adapters/warpConversationReader.ts.
  */
 export interface ConversationReader {
-  readCapture(captureId: string): CaptureRead;
+  readCapture(captureId: string): Promise<CaptureRead>;
 }
 
 /**
@@ -106,11 +106,10 @@ export interface SessionsRead {
  * A sibling of ConversationReader (which stays untouched for marker mode). The
  * whole read runs inside ONE source snapshot; `storedByCid` (supplied by the
  * use case from the stored file headers) drives skip-unchanged so unchanged
- * conversations are never gathered. The Warp implementation lives in
- * adapters/warpConversationReader.ts; other sources reject the mode until
- * they implement this port.
+ * conversations are never gathered. Every reader (Warp, Claude Code, Hermes,
+ * Langfuse) implements it.
  */
 export interface SessionReader {
-  readSessions(options: ReadSessionsOptions): SessionsRead;
+  readSessions(options: ReadSessionsOptions): Promise<SessionsRead>;
 }
 

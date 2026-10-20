@@ -1,9 +1,18 @@
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { DEFAULT_LABEL } from "../domain/models.js";
-import type { EventDraft, Label, SkippedRow } from "../domain/models.js";
-import type { ConversationReader, CaptureRead } from "../domain/ports.js";
+import type { EventDraft, Label, SessionInfo, SkippedRow } from "../domain/models.js";
+import type {
+  ConversationReader,
+  ReadSessionsOptions,
+  SessionGather,
+  SessionReader,
+  SessionsRead,
+  CaptureRead,
+} from "../domain/ports.js";
+import { parseSinceUtc } from "../domain/stamps.js";
+import { shouldGather } from "../domain/skipUnchanged.js";
+import { exactMarkersInCommand, type ExactMarker } from "../domain/captureMarker.js";
 
 export interface HermesConversationReaderOptions {
   dbPath?: string;
@@ -42,11 +51,6 @@ interface ParsedMessage {
   toolCalls: ParsedToolCall[];
 }
 
-interface ParsedMarker {
-  captureId: string;
-  label: Label;
-}
-
 const REQUIRED_COLUMNS = {
   sessions: ["id", "source", "parent_session_id"],
   messages: [
@@ -64,41 +68,91 @@ const REQUIRED_COLUMNS = {
 const MARKER_TOOLS = new Set(["terminal", "run_shell_command"]);
 const MARKER_ANCHOR = "CAPTURE_MARKER";
 
-export class HermesConversationReader implements ConversationReader {
+/** One Hermes session for `--sessions`: a lineage root and the rows that join it. */
+interface SessionGroup {
+  info: SessionInfo;
+  members: HermesSessionRow[];
+}
+
+export class HermesConversationReader implements ConversationReader, SessionReader {
   private readonly explicitDbPath: string | undefined;
 
   constructor(options: HermesConversationReaderOptions = {}) {
     this.explicitDbPath = options.dbPath;
   }
 
-  readCapture(captureId: string): CaptureRead {
+  async readCapture(captureId: string): Promise<CaptureRead> {
+    return this.withSnapshot((db, columns) => {
+      const sessions = readSessionRows(db, columns.sessions);
+      const markerMessages = readMarkerMessages(db, columns.messages);
+      const skipped: SkippedRow[] = [];
+      const labelByCid = bindSessions(sessions, markerMessages, captureId, skipped);
+      const messages = readBoundMessages(db, columns.messages, labelByCid, skipped);
+      const sessionById = new Map(sessions.map((session) => [session.id, session]));
+      const drafts = messages.flatMap((message) =>
+        draftsFromMessage(message, labelByCid, sessionById)
+      );
+
+      return {
+        source: "hermes" as const,
+        labelByCid,
+        drafts,
+        skipped,
+        unbindable: [],
+        collisions: [],
+        heuristic_bindings: [],
+      };
+    });
+  }
+
+  /**
+   * Session mode (`--sessions`): one session per lineage root — a `sessions`
+   * row plus the descendants the marker-mode lineage rule joins to it
+   * (compression continuations and delegate subagents; `/branch`, generic and
+   * tool children are their own sessions). `last_modified` is the latest
+   * message timestamp of the group (ISO-8601 UTC); the `--since`/
+   * `--conversation` filters and skip-unchanged mirror the Warp reader. Every
+   * event carries the root's id as its conversation, inside one read
+   * transaction as in marker mode.
+   */
+  async readSessions(options: ReadSessionsOptions): Promise<SessionsRead> {
+    return this.withSnapshot((db, columns) => {
+      const sessionRows = readSessionRows(db, columns.sessions);
+      let selected = groupSessions(sessionRows, readLatestMessageStamps(db));
+
+      if (options.conversation !== undefined) {
+        selected = selected.filter((g) => g.info.conversation_id === options.conversation);
+      }
+      if (options.since !== undefined) {
+        const cutoff = parseSinceUtc(options.since);
+        if (cutoff !== null) {
+          // A group without messages has no stamp: included, never hidden.
+          selected = selected.filter(
+            (g) => g.info.last_modified === null || Date.parse(g.info.last_modified) >= cutoff
+          );
+        }
+      }
+
+      const sessionById = new Map(sessionRows.map((session) => [session.id, session]));
+      const reads = new Map<string, SessionGather>();
+      for (const group of selected) {
+        if (!shouldGather(group.info, options)) continue;
+        reads.set(group.info.conversation_id, gatherGroup(db, columns.messages, group, sessionById));
+      }
+
+      return { source: "hermes", sessions: selected.map((g) => g.info), reads };
+    });
+  }
+
+  /** Open the DB read-only and run `fn` inside one deferred read transaction. */
+  private withSnapshot<T>(
+    fn: (db: Database.Database, columns: Record<keyof typeof REQUIRED_COLUMNS, Set<string>>) => T
+  ): T {
     const dbPath = this.resolveDbPath();
     const db = openReadOnly(dbPath);
 
     try {
-      const readSnapshot = db.transaction(() => {
-        const columns = validateSchema(db, dbPath);
-        const sessions = readSessions(db, columns.sessions);
-        const markerMessages = readMarkerMessages(db, columns.messages);
-        const skipped: SkippedRow[] = [];
-        const labelByCid = bindSessions(sessions, markerMessages, captureId, skipped);
-        const messages = readBoundMessages(db, columns.messages, labelByCid, skipped);
-        const sessionById = new Map(sessions.map((session) => [session.id, session]));
-        const drafts = messages.flatMap((message) =>
-          draftsFromMessage(message, labelByCid, sessionById)
-        );
-
-        return {
-          source: "hermes" as const,
-          labelByCid,
-          drafts,
-          skipped,
-          unbindable: [],
-          collisions: [],
-          heuristic_bindings: [],
-        };
-      });
-      return readSnapshot.deferred();
+      return db.transaction(() => fn(db, validateSchema(db, dbPath))).deferred();
     } finally {
       db.close();
     }
@@ -171,7 +225,7 @@ function optionalColumn(columns: Set<string>, name: string, fallback: string): s
   return columns.has(name) ? name : `${fallback} AS ${name}`;
 }
 
-function readSessions(
+function readSessionRows(
   db: Database.Database,
   columns: Set<string>
 ): HermesSessionRow[] {
@@ -221,7 +275,7 @@ function readMarkerMessages(
 function readBoundMessages(
   db: Database.Database,
   columns: Set<string>,
-  labelByCid: Map<string, Label>,
+  sessionIds: ReadonlyMap<string, Label> | ReadonlySet<string>,
   skipped: SkippedRow[]
 ): ParsedMessage[] {
   const statement = db.prepare(
@@ -231,12 +285,102 @@ function readBoundMessages(
   );
   const messages: ParsedMessage[] = [];
 
-  for (const sessionId of labelByCid.keys()) {
+  for (const sessionId of sessionIds.keys()) {
     const rows = statement.all(sessionId) as HermesMessageRow[];
     for (const row of rows) messages.push(parseMessage(row, skipped));
   }
 
   return messages;
+}
+
+/** Latest message timestamp (epoch seconds) per session id. */
+function readLatestMessageStamps(db: Database.Database): Map<string, number> {
+  const rows = db
+    .prepare("SELECT session_id, MAX(timestamp) AS latest FROM messages GROUP BY session_id")
+    .all() as Array<{ session_id: string; latest: number }>;
+  return new Map(rows.map((row) => [row.session_id, row.latest]));
+}
+
+/**
+ * Group every session row under its lineage root (rows keep their
+ * `started_at, id` order). Deterministic order: stamped groups by stamp
+ * (tiebreak on id), then unstamped ones — the Warp enumeration order.
+ */
+function groupSessions(
+  sessions: HermesSessionRow[],
+  latestBySession: Map<string, number>
+): SessionGroup[] {
+  const sessionById = new Map(sessions.map((session) => [session.id, session]));
+  const membersByRoot = new Map<string, HermesSessionRow[]>();
+  for (const session of sessions) {
+    const rootId = lineageRootId(session, sessionById);
+    membersByRoot.set(rootId, [...(membersByRoot.get(rootId) ?? []), session]);
+  }
+
+  return [...membersByRoot]
+    .map(([conversation_id, members]) => ({
+      info: { conversation_id, last_modified: latestStamp(members, latestBySession) },
+      members,
+    }))
+    .sort(byStampThenId);
+}
+
+/** Walk up the workflow parents (the marker-mode lineage rule) to the topmost known row. */
+function lineageRootId(
+  session: HermesSessionRow,
+  sessionById: Map<string, HermesSessionRow>
+): string {
+  const visited = new Set<string>([session.id]);
+  let current = session;
+  for (;;) {
+    const parentId = workflowParentId(current, sessionById);
+    const parent = parentId === undefined ? undefined : sessionById.get(parentId);
+    if (parent === undefined || visited.has(parent.id)) return current.id;
+    visited.add(parent.id);
+    current = parent;
+  }
+}
+
+function latestStamp(
+  members: HermesSessionRow[],
+  latestBySession: Map<string, number>
+): string | null {
+  const stamps = members.flatMap((member) => {
+    const latest = latestBySession.get(member.id);
+    return latest === undefined ? [] : [latest];
+  });
+  return stamps.length === 0 ? null : new Date(Math.max(...stamps) * 1000).toISOString();
+}
+
+function byStampThenId(a: SessionGroup, b: SessionGroup): number {
+  const left = a.info.last_modified;
+  const right = b.info.last_modified;
+  if (left !== right) {
+    if (left === null) return 1;
+    if (right === null) return -1;
+    return compareText(left, right);
+  }
+  return compareText(a.info.conversation_id, b.info.conversation_id);
+}
+
+/** Code-unit order (not `localeCompare`): stamps and ids sort byte-wise. */
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Map every message of the group's rows, each event under the root's id. */
+function gatherGroup(
+  db: Database.Database,
+  columns: Set<string>,
+  group: SessionGroup,
+  sessionById: Map<string, HermesSessionRow>
+): SessionGather {
+  const memberIds = new Set(group.members.map((member) => member.id));
+  const skipped: SkippedRow[] = [];
+  const drafts = readBoundMessages(db, columns, memberIds, skipped)
+    .flatMap((message) => draftsFromMessage(message, memberIds, sessionById))
+    .map((draft) => ({ ...draft, conversation_id: group.info.conversation_id }));
+  return { drafts, skipped, last_modified: group.info.last_modified };
 }
 
 function parseMessage(row: HermesMessageRow, skipped: SkippedRow[]): ParsedMessage {
@@ -310,7 +454,7 @@ function bindSessions(
   captureId: string,
   skipped: SkippedRow[]
 ): Map<string, Label> {
-  const markersBySession = new Map<string, ParsedMarker[]>();
+  const markersBySession = new Map<string, ExactMarker[]>();
   for (const row of markerMessages) {
     for (const call of parseToolCalls(row)) {
       const markers = markersFromToolCall(call);
@@ -402,45 +546,19 @@ function parseModelConfig(raw: string | null): Record<string, unknown> {
   }
 }
 
-function markersFromToolCall(call: ParsedToolCall): ParsedMarker[] {
+function markersFromToolCall(call: ParsedToolCall): ExactMarker[] {
   if (!MARKER_TOOLS.has(call.name)) return [];
   const command = stringField(call.arguments, "command");
-  if (command === undefined) return [];
-
-  const markers: ParsedMarker[] = [];
-  for (const line of command.split("\n")) {
-    const marker = parseExactMarkerLine(line.trim());
-    if (marker !== null) markers.push(marker);
-  }
-  return markers;
-}
-
-function parseExactMarkerLine(line: string): ParsedMarker | null {
-  const tokens = line.split(" ");
-  if (
-    (tokens.length !== 4 && tokens.length !== 5) ||
-    tokens[0] !== ":" ||
-    tokens[1] !== "CAPTURE_MARKER" ||
-    tokens[2] !== "v=1" ||
-    !tokens[3]!.startsWith("id=") ||
-    (tokens.length === 5 && !tokens[4]!.startsWith("label="))
-  ) {
-    return null;
-  }
-
-  const captureId = tokens[3]!.slice("id=".length);
-  const label = tokens.length === 5 ? tokens[4]!.slice("label=".length) : DEFAULT_LABEL;
-  if (captureId.length === 0 || label.length === 0) return null;
-  return { captureId, label };
+  return command === undefined ? [] : exactMarkersInCommand(command);
 }
 
 function draftsFromMessage(
   message: ParsedMessage,
-  labelByCid: Map<string, Label>,
+  boundSessionIds: { has(sessionId: string): boolean },
   sessionById: Map<string, HermesSessionRow>
 ): EventDraft[] {
   const { row, toolCalls } = message;
-  if (!labelByCid.has(row.session_id)) return [];
+  if (!boundSessionIds.has(row.session_id)) return [];
   const session = sessionById.get(row.session_id);
   if (session === undefined) return [];
 

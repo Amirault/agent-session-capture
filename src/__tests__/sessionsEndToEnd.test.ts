@@ -156,13 +156,4 @@ describe("§9.23 end-to-end --sessions (CLI -> snapshot adapter -> use-case -> s
     expect(fs.existsSync(outDir)).toBe(false);
   });
 
-  it("Given a source that does not implement the SessionReader port, When the CLI runs --sessions, Then it exits 2 with an explicit not-supported error", () => {
-    // When — claude-code implements ConversationReader only
-    const result = runCli(["--sessions", "--source", "claude-code", "--out", outDir]);
-
-    // Then
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain('error: source "claude-code" does not support --sessions yet');
-    expect(fs.existsSync(outDir)).toBe(false);
-  });
 });

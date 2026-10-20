@@ -222,7 +222,7 @@ describe("HermesConversationReader", () => {
 
   it.each(["terminal", "run_shell_command"])(
     "GivenAnExactMarkerInsideAMultilineAssistant%sCall_WhenExtracting_ShouldBind",
-    (name) => {
+    async (name) => {
       // Given
       const db = createHermesDb(dbPath);
       seedSession(db, "multiline-session");
@@ -232,14 +232,14 @@ describe("HermesConversationReader", () => {
       db.close();
 
       // When
-      const { bundle } = extractBundle(new HermesConversationReader({ dbPath }), SPEC);
+      const { bundle } = await extractBundle(new HermesConversationReader({ dbPath }), SPEC);
 
       // Then
       expect(bundle?.header.conversations_per_label.implement).toBe(1);
     }
   );
 
-  it("GivenMarkerShapedNoise_WhenExtracting_ShouldRejectEveryNonCanonicalExecution", () => {
+  it("GivenMarkerShapedNoise_WhenExtracting_ShouldRejectEveryNonCanonicalExecution", async () => {
     // Given
     const db = createHermesDb(dbPath);
     const exact = marker("implement");
@@ -275,14 +275,14 @@ describe("HermesConversationReader", () => {
     db.close();
 
     // When
-    const result = extractBundle(new HermesConversationReader({ dbPath }), SPEC);
+    const result = await extractBundle(new HermesConversationReader({ dbPath }), SPEC);
 
     // Then
     expect(result.bundle?.events).toEqual([]);
     expect(result.summary.conversations).toBe(0);
   });
 
-  it("GivenParallelAndMalformedToolCalls_WhenExtracting_ShouldKeepValidEventsAndReportSkips", () => {
+  it("GivenParallelAndMalformedToolCalls_WhenExtracting_ShouldKeepValidEventsAndReportSkips", async () => {
     // Given
     const db = createHermesDb(dbPath);
     seedSession(db, "tool-session");
@@ -310,7 +310,7 @@ describe("HermesConversationReader", () => {
     db.close();
 
     // When
-    const result = extractBundle(new HermesConversationReader({ dbPath }), SPEC);
+    const result = await extractBundle(new HermesConversationReader({ dbPath }), SPEC);
 
     // Then
     expect(result.bundle?.events.map((event) => [event.role, event.kind])).toEqual(
@@ -327,7 +327,7 @@ describe("HermesConversationReader", () => {
     expect(result.summary.skipped_rows).toHaveLength(2);
   });
 
-  it("GivenWorkflowAndNonWorkflowChildren_WhenExtracting_ShouldApplyNearestMarkedLineage", () => {
+  it("GivenWorkflowAndNonWorkflowChildren_WhenExtracting_ShouldApplyNearestMarkedLineage", async () => {
     // Given
     const db = createHermesDb(dbPath);
     seedSession(db, "root", { endReason: "compression" });
@@ -363,7 +363,7 @@ describe("HermesConversationReader", () => {
     db.close();
 
     // When
-    const { bundle } = extractBundle(new HermesConversationReader({ dbPath }), SPEC);
+    const { bundle } = await extractBundle(new HermesConversationReader({ dbPath }), SPEC);
 
     // Then
     const labels = Object.fromEntries(
@@ -377,7 +377,7 @@ describe("HermesConversationReader", () => {
     expect(bundle?.header.conversations_per_label.implement).toBe(3);
   });
 
-  it("GivenAConflictingMarkerSession_WhenResolvingDescendants_ShouldBlockInheritanceAndReportCollision", () => {
+  it("GivenAConflictingMarkerSession_WhenResolvingDescendants_ShouldBlockInheritanceAndReportCollision", async () => {
     // Given
     const db = createHermesDb(dbPath);
     seedSession(db, "root", { endReason: "compression" });
@@ -393,7 +393,7 @@ describe("HermesConversationReader", () => {
     db.close();
 
     // When
-    const result = extractBundle(new HermesConversationReader({ dbPath }), SPEC);
+    const result = await extractBundle(new HermesConversationReader({ dbPath }), SPEC);
 
     // Then
     expect(result.bundle?.events.map((event) => event.content)).not.toContain("blocked");
@@ -411,7 +411,7 @@ describe("HermesConversationReader", () => {
     );
   });
 
-  it("GivenActiveCompactedAndParallelHermesMessages_WhenExtracting_ShouldPreserveHistoryAndIdentifiers", () => {
+  it("GivenActiveCompactedAndParallelHermesMessages_WhenExtracting_ShouldPreserveHistoryAndIdentifiers", async () => {
     // Given
     const db = createHermesDb(dbPath);
     seedSession(db, "history-session");
@@ -435,7 +435,7 @@ describe("HermesConversationReader", () => {
     db.close();
 
     // When
-    const { bundle } = extractBundle(new HermesConversationReader({ dbPath }), SPEC);
+    const { bundle } = await extractBundle(new HermesConversationReader({ dbPath }), SPEC);
 
     // Then
     const original = bundle?.events.find((event) => event.content === "inactive original");
@@ -445,7 +445,7 @@ describe("HermesConversationReader", () => {
     expect(typeof original?.meta.message_id).toBe("number");
   });
 
-  it("GivenAClockRegressionWithinOneConversation_WhenExtracting_ShouldKeepToolCallBeforeResult", () => {
+  it("GivenAClockRegressionWithinOneConversation_WhenExtracting_ShouldKeepToolCallBeforeResult", async () => {
     // Given
     const db = createHermesDb(dbPath);
     seedSession(db, "clock-session");
@@ -464,7 +464,7 @@ describe("HermesConversationReader", () => {
     db.close();
 
     // When
-    const { bundle } = extractBundle(new HermesConversationReader({ dbPath }), SPEC);
+    const { bundle } = await extractBundle(new HermesConversationReader({ dbPath }), SPEC);
 
     // Then
     expect(
@@ -472,10 +472,10 @@ describe("HermesConversationReader", () => {
     ).toEqual(["tool_call", "tool_result"]);
   });
 
-  it("GivenCausalDraftsAcrossConversations_WhenExtracting_ShouldUseATransitiveGlobalOrder", () => {
+  it("GivenCausalDraftsAcrossConversations_WhenExtracting_ShouldUseATransitiveGlobalOrder", async () => {
     // Given
     const reader: ConversationReader = {
-      readCapture: () => ({
+      readCapture: async () => ({
         source: "hermes",
         labelByCid: new Map([
           ["a", "implement"],
@@ -524,7 +524,7 @@ describe("HermesConversationReader", () => {
     };
 
     // When
-    const { bundle } = extractBundle(reader, SPEC);
+    const { bundle } = await extractBundle(reader, SPEC);
 
     // Then
     expect(bundle?.events.map((event) => event.content)).toEqual([
@@ -535,7 +535,7 @@ describe("HermesConversationReader", () => {
     ]);
   });
 
-  it("GivenCommittedWalFrames_WhenReadingTheLiveDb_ShouldSeeThemWithoutWriting", () => {
+  it("GivenCommittedWalFrames_WhenReadingTheLiveDb_ShouldSeeThemWithoutWriting", async () => {
     // Given
     const writer = createHermesDb(dbPath, "wal");
     writer.pragma("wal_autocheckpoint = 0");
@@ -545,7 +545,7 @@ describe("HermesConversationReader", () => {
     seedText(writer, "wal-session", "committed in WAL", 1_784_000_001);
 
     // When
-    const { bundle } = extractBundle(new HermesConversationReader({ dbPath }), SPEC);
+    const { bundle } = await extractBundle(new HermesConversationReader({ dbPath }), SPEC);
 
     // Then
     expect(bundle?.events.map((event) => event.content)).toContain("committed in WAL");
@@ -571,17 +571,17 @@ describe("HermesConversationReader", () => {
       "CREATE TABLE sessions (id TEXT, source TEXT, parent_session_id TEXT); CREATE TABLE messages (id INTEGER, session_id TEXT, role TEXT, content TEXT, timestamp REAL)",
       "messages.tool_calls",
     ],
-  ])("GivenAnIncompatibleDbWith%s_WhenExtracting_ShouldNamePathAndSchema", (_name, sql, expected) => {
+  ])("GivenAnIncompatibleDbWith%s_WhenExtracting_ShouldNamePathAndSchema", async (_name, sql, expected) => {
     // Given
     const db = new Database(dbPath);
     db.exec(sql);
     db.close();
 
     // When / Then
-    expect(() => extractBundle(new HermesConversationReader({ dbPath }), SPEC)).toThrow(
+    await expect(extractBundle(new HermesConversationReader({ dbPath }), SPEC)).rejects.toThrow(
       expect.objectContaining({ message: expect.stringContaining(dbPath) })
     );
-    expect(() => extractBundle(new HermesConversationReader({ dbPath }), SPEC)).toThrow(
+    await expect(extractBundle(new HermesConversationReader({ dbPath }), SPEC)).rejects.toThrow(
       expect.objectContaining({ message: expect.stringContaining(expected) })
     );
   });
@@ -624,6 +624,6 @@ describe("HermesConversationReader", () => {
 
     // Then
     expect(result.status).toBe(2);
-    expect(result.stderr).toContain('"warp", "claude-code", or "hermes"');
+    expect(result.stderr).toContain('"warp", "claude-code", "hermes", or "langfuse"');
   });
 });

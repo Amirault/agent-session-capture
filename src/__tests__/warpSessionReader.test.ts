@@ -40,7 +40,7 @@ describe("§9.19 WarpConversationReader.readSessions — enumeration, filters, s
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("Given conversations split across agent_conversations and agent_tasks, When readSessions, Then enumeration unions both durable tables and takes the MAX stamp (a tasks-only conversation is listed)", () => {
+  it("Given conversations split across agent_conversations and agent_tasks, When readSessions, Then enumeration unions both durable tables and takes the MAX stamp (a tasks-only conversation is listed)", async () => {
     // Given — c1 in both tables (tasks stamp later), c2 conversations-only, c3 tasks-only
     seedConversation(db, { conversation_id: "c1", last_modified_at: "2026-06-30 10:00:00.000000" });
     seedTask(db, { conversation_id: "c1", task: encodeString(1, "c1 task"), last_modified_at: "2026-06-30 10:30:00.000000" });
@@ -48,7 +48,7 @@ describe("§9.19 WarpConversationReader.readSessions — enumeration, filters, s
     seedTask(db, { conversation_id: "c3", task: encodeString(1, "c3 task"), last_modified_at: "2026-07-02 08:00:00.000000" });
 
     // When
-    const read = new WarpConversationReader(fakeSource(db)).readSessions({ storedByCid: new Map() });
+    const read = await new WarpConversationReader(fakeSource(db)).readSessions({ storedByCid: new Map() });
 
     // Then
     expect(read.source).toBe("warp");
@@ -58,16 +58,16 @@ describe("§9.19 WarpConversationReader.readSessions — enumeration, filters, s
     expect(byCid.get("c3")).toBe("2026-07-02 08:00:00.000000"); // listed without an agent_conversations row
   });
 
-  it("Given conversations with different last activity, When readSessions with --since, Then only conversations at/after the cutoff are enumerated", () => {
+  it("Given conversations with different last activity, When readSessions with --since, Then only conversations at/after the cutoff are enumerated", async () => {
     // Given
     seedConversation(db, { conversation_id: "c1", last_modified_at: "2026-06-30 10:00:00.000000" });
     seedConversation(db, { conversation_id: "c2", last_modified_at: "2026-07-15 09:00:00.000000" });
     const reader = new WarpConversationReader(fakeSource(db));
 
     // When
-    const afterJuly = reader.readSessions({ since: "2026-07-01", storedByCid: new Map() });
-    const atBoundary = reader.readSessions({ since: "2026-07-15T09:00:00Z", storedByCid: new Map() });
-    const afterJune = reader.readSessions({ since: "2026-06-01", storedByCid: new Map() });
+    const afterJuly = await reader.readSessions({ since: "2026-07-01", storedByCid: new Map() });
+    const atBoundary = await reader.readSessions({ since: "2026-07-15T09:00:00Z", storedByCid: new Map() });
+    const afterJune = await reader.readSessions({ since: "2026-06-01", storedByCid: new Map() });
 
     // Then
     expect(afterJuly.sessions.map((s) => s.conversation_id)).toEqual(["c2"]);
@@ -75,7 +75,7 @@ describe("§9.19 WarpConversationReader.readSessions — enumeration, filters, s
     expect(afterJune.sessions.map((s) => s.conversation_id)).toEqual(["c1", "c2"]);
   });
 
-  it("Given one conversation with query/block/task rows and other conversations present, When readSessions, Then gather collects queries + blocks + tasks for that cid only (subagent tasks share the parent cid), with no marker anywhere in the fixture", () => {
+  it("Given one conversation with query/block/task rows and other conversations present, When readSessions, Then gather collects queries + blocks + tasks for that cid only (subagent tasks share the parent cid), with no marker anywhere in the fixture", async () => {
     // Given — c1 with all three event kinds, its task row tagged like a subagent task; c2 separate
     seedConversation(db, { conversation_id: "c1", last_modified_at: "2026-06-30 10:00:00.000000" });
     seedQuery(db, { conversation_id: "c1", start_ts: "2026-06-30 10:10:00.000000", text: "fix the login" });
@@ -85,7 +85,7 @@ describe("§9.19 WarpConversationReader.readSessions — enumeration, filters, s
     seedQuery(db, { conversation_id: "c2", start_ts: "2026-07-01 09:10:00.000000", text: "other conversation" });
 
     // When
-    const read = new WarpConversationReader(fakeSource(db)).readSessions({ storedByCid: new Map() });
+    const read = await new WarpConversationReader(fakeSource(db)).readSessions({ storedByCid: new Map() });
 
     // Then — no marker rows exist anywhere; both conversations still enumerate and gather
     const markerRows = db
@@ -106,7 +106,7 @@ describe("§9.19 WarpConversationReader.readSessions — enumeration, filters, s
     expect(read.reads.size).toBe(2);
   });
 
-  it("Given stored headers by cid, When readSessions, Then only changed or new conversations are gathered (raw stamp equality) and --conversation forces a gather despite an equal stamp", () => {
+  it("Given stored headers by cid, When readSessions, Then only changed or new conversations are gathered (raw stamp equality) and --conversation forces a gather despite an equal stamp", async () => {
     // Given — c1 stored with an equal stamp, c2 stored with an older stamp, c3 not stored
     seedConversation(db, { conversation_id: "c1", last_modified_at: "2026-06-30 10:00:00.000000" });
     seedQuery(db, { conversation_id: "c1", start_ts: "2026-06-30 10:10:00.000000", text: "same" });
@@ -120,7 +120,7 @@ describe("§9.19 WarpConversationReader.readSessions — enumeration, filters, s
     ]);
 
     // When
-    const read = new WarpConversationReader(fakeSource(db)).readSessions({ storedByCid });
+    const read = await new WarpConversationReader(fakeSource(db)).readSessions({ storedByCid });
 
     // Then — equal stamp skipped, different and new gathered
     expect(read.reads.has("c1")).toBe(false);
@@ -128,7 +128,7 @@ describe("§9.19 WarpConversationReader.readSessions — enumeration, filters, s
     expect(read.reads.has("c3")).toBe(true);
 
     // And — the --conversation debug filter always gathers its conversation
-    const forced = new WarpConversationReader(fakeSource(db)).readSessions({
+    const forced = await new WarpConversationReader(fakeSource(db)).readSessions({
       conversation: "c1",
       storedByCid,
     });

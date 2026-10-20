@@ -83,10 +83,10 @@ function toSessionEvents(drafts: EventDraft[]): SessionEvent[] {
  * stored-only degrade is needed. Every gather, load and merge completes before
  * the first write, so a mid-run failure leaves the disk untouched.
  */
-export function extractSessions(
+export async function extractSessions(
   reader: SessionReader,
   options: ExtractSessionsOptions
-): ExtractSessionsResult {
+): Promise<ExtractSessionsResult> {
   const { outDir, source, since, conversation } = options;
   const noMerge = options.noMerge ?? false;
   const sessionsDir = path.join(outDir, "sessions");
@@ -96,7 +96,7 @@ export function extractSessions(
   const storedByCid = new Map([...storedByEntry].map(([cid, entry]) => [cid, entry.header]));
 
   // 2. Fresh read: one snapshot; only changed conversations are gathered.
-  const { sessions, reads } = reader.readSessions({ since, conversation, storedByCid });
+  const { sessions, reads } = await reader.readSessions({ since, conversation, storedByCid });
 
   // 3. Build every session in memory first (loads + merges); writes come after,
   //    so any failure leaves every file on disk untouched.

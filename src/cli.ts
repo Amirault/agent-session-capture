@@ -4,6 +4,8 @@ import { WarpSqliteAdapter } from "./adapters/warpSqliteAdapter.js";
 import { WarpConversationReader } from "./adapters/warpConversationReader.js";
 import { ClaudeCodeTranscriptReader } from "./adapters/claudeCodeTranscriptReader.js";
 import { HermesConversationReader } from "./adapters/hermesConversationReader.js";
+import { LangfuseConversationReader } from "./adapters/langfuseConversationReader.js";
+import { LangfuseObservationClient } from "./adapters/langfuseObservationClient.js";
 import { JsonlSink } from "./adapters/jsonlSink.js";
 import { JsonlBundleReader } from "./adapters/jsonlBundleReader.js";
 import { extractBundle } from "./usecases/extractBundle.js";
@@ -13,8 +15,9 @@ import { formatRunReport, formatSessionReport } from "./formatRunReport.js";
 import type { ConversationReader, SessionReader } from "./domain/ports.js";
 import type { CaptureBundle, SessionRunSummary } from "./domain/models.js";
 import { parseSinceUtc } from "./domain/stamps.js";
+import { SourceConfigurationError } from "./domain/sourceErrors.js";
 
-type CliSource = "warp" | "claude-code" | "hermes";
+type CliSource = "warp" | "claude-code" | "hermes" | "langfuse";
 
 interface CliArgs {
   id?: string;
@@ -24,6 +27,7 @@ interface CliArgs {
   hermesDbPath?: string;
   source?: CliSource;
   claudeRoot?: string;
+  langfuseEnv?: string;
   sessions: boolean;
   since?: string;
   conversation?: string;
@@ -42,6 +46,7 @@ function safeParseNodeArgs(argv: string[]) {
         "hermes-db-path": { type: "string" },
         source: { type: "string" },
         "claude-root": { type: "string" },
+        "langfuse-env": { type: "string" },
         sessions: { type: "boolean", default: false },
         since: { type: "string" },
         conversation: { type: "string" },
@@ -78,18 +83,23 @@ function parseArgs(argv: string[]): CliArgs {
     hermesDbPath: values["hermes-db-path"],
     source,
     claudeRoot: values["claude-root"],
+    langfuseEnv: values["langfuse-env"],
     sessions: values.sessions,
     since: values.since,
     conversation: values.conversation,
   };
 }
 
+const SOURCE_REQUIRED =
+  'error: --source is required for extraction ("warp", "claude-code", "hermes", or "langfuse")';
+
 function parseSource(value: string): CliSource {
   if (value === "warp") return "warp";
   if (value === "claude-code") return "claude-code";
   if (value === "hermes") return "hermes";
+  if (value === "langfuse") return "langfuse";
   console.error(
-    `error: --source must be "warp", "claude-code", or "hermes" (got "${value}")`
+    `error: --source must be "warp", "claude-code", "hermes", or "langfuse" (got "${value}")`
   );
   printUsage();
   process.exit(2);
@@ -110,16 +120,22 @@ function isSafeCaptureId(id: string): boolean {
 }
 
 function printUsage(): void {
-  console.error(`usage: capture.sh --id <capture-id> --source warp|claude-code|hermes [--no-merge] [--out dir] [--db-path path] [--claude-root dir] [--hermes-db-path path]
-       capture.sh --sessions --source warp [--since <ISO-8601>] [--conversation <cid>] [--no-merge] [--out dir] [--db-path path]`);
+  console.error(`usage: capture.sh --id <capture-id> --source warp|claude-code|hermes|langfuse [--no-merge] [--out dir] [--db-path path] [--claude-root dir] [--hermes-db-path path] [--langfuse-env file]
+       capture.sh --sessions --source warp|claude-code|hermes|langfuse [--since <ISO-8601>] [--conversation <cid>] [--no-merge] [--out dir] [--db-path path] [--claude-root dir] [--hermes-db-path path] [--langfuse-env file]`);
 }
 
-function readerFor(args: CliArgs & { source: CliSource }): ConversationReader {
+/** Every source implements both reader ports (marker mode and `--sessions`). */
+function readerFor(args: CliArgs & { source: CliSource }): ConversationReader & SessionReader {
   if (args.source === "claude-code") {
     return new ClaudeCodeTranscriptReader({ rootDir: args.claudeRoot });
   }
   if (args.source === "hermes") {
     return new HermesConversationReader({ dbPath: args.hermesDbPath });
+  }
+  if (args.source === "langfuse") {
+    return new LangfuseConversationReader(
+      new LangfuseObservationClient({ envFile: args.langfuseEnv })
+    );
   }
   return new WarpConversationReader(
     new WarpSqliteAdapter({ liveDbPath: args.dbPath })
@@ -176,7 +192,7 @@ function loadExistingBundle(
   return { existingBundle: loaded, replacedExisting: false };
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
   // Cross-mode flag validation — usage errors before any I/O. Neither check
@@ -197,9 +213,7 @@ function main(): void {
 
   if (args.sessions) {
     if (!args.source) {
-      console.error(
-        'error: --source is required for extraction ("warp", "claude-code", or "hermes")'
-      );
+      console.error(SOURCE_REQUIRED);
       printUsage();
       process.exit(2);
     }
@@ -210,7 +224,7 @@ function main(): void {
       printUsage();
       process.exit(2);
     }
-    runSessionsMode({ ...args, sessions: true, source: args.source });
+    await runSessionsMode({ ...args, sessions: true, source: args.source });
     return;
   }
 
@@ -229,9 +243,7 @@ function main(): void {
 
   const source = args.source;
   if (!source) {
-    console.error(
-      'error: --source is required for extraction ("warp", "claude-code", or "hermes")'
-    );
+    console.error(SOURCE_REQUIRED);
     printUsage();
     process.exit(2);
   }
@@ -247,13 +259,13 @@ function main(): void {
   const reader = readerFor({ ...args, source });
   let result: ExtractResult;
   try {
-    result = extractBundle(reader, args.id, {
+    result = await extractBundle(reader, args.id, {
       noMerge: args.noMerge,
       existingBundle,
     });
   } catch (e) {
     console.error(`error: ${e instanceof Error ? e.message : String(e)}`);
-    process.exit(1);
+    process.exit(e instanceof SourceConfigurationError ? 2 : 1);
   }
 
   const { bundle, summary } = result;
@@ -275,26 +287,18 @@ function main(): void {
 }
 
 /**
- * The `--sessions` run: dispatch through the same readerFor, duck-type-check
- * the SessionReader port (claude-code and hermes do not implement it yet),
- * then extract + report. Exit codes: 2 usage (handled above), 1 fresh-read
- * failure or zero sessions enumerated, 0 otherwise.
+ * The `--sessions` run: dispatch through the same readerFor, then extract +
+ * report. Exit codes: 2 usage (handled above) or source configuration (missing
+ * Langfuse credentials), 1 fresh-read failure or zero sessions enumerated,
+ * 0 otherwise.
  */
-function runSessionsMode(args: CliArgs & { sessions: true; source: CliSource }): void {
-  const reader = readerFor(args);
-  if (typeof (reader as Partial<SessionReader>).readSessions !== "function") {
-    console.error(`error: source "${args.source}" does not support --sessions yet`);
-    printUsage();
-    process.exit(2);
-  }
-
-  // The duck-type check above is the runtime guarantee; narrow for the
-  // type system (sources that do not implement SessionReader exited above).
-  const sessionReader = reader as unknown as SessionReader;
+async function runSessionsMode(
+  args: CliArgs & { sessions: true; source: CliSource }
+): Promise<void> {
   const outDir = args.out ?? "out";
   let summary: SessionRunSummary;
   try {
-    ({ summary } = extractSessions(sessionReader, {
+    ({ summary } = await extractSessions(readerFor(args), {
       outDir,
       source: args.source,
       since: args.since,
@@ -303,7 +307,7 @@ function runSessionsMode(args: CliArgs & { sessions: true; source: CliSource }):
     }));
   } catch (e) {
     console.error(`error: ${e instanceof Error ? e.message : String(e)}`);
-    process.exit(1);
+    process.exit(e instanceof SourceConfigurationError ? 2 : 1);
   }
 
   const report = formatSessionReport(summary);
@@ -312,4 +316,4 @@ function runSessionsMode(args: CliArgs & { sessions: true; source: CliSource }):
   process.exit(report.exitCode);
 }
 
-main();
+await main();

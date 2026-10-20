@@ -34,12 +34,16 @@ Rules (see [docs/MARKER.md](../../docs/MARKER.md)):
 ## 2. Export (only when asked)
 
 Select the source of the **active runtime** explicitly: Warp → `warp`, Claude Code →
-`claude-code`, Hermes → `hermes`.
+`claude-code`, Hermes → `hermes`. A runtime that traces to Langfuse (e.g. Hermes on a server)
+is read with `--source langfuse`, credentials from `LANGFUSE_*` or
+`~/.config/langfuse/capture.env`.
 
 ```bash
 $AGENT_CAPTURE_HOME/capture.sh --id <id> --source <session_source>
 ```
 
-It writes or merges `.agent-captures/<id>.jsonl`. A warning is not a failure: report it. Exit
-code `1` means nothing was written (no conversation carried the marker, or the store could
-not be read) — read the message and report it instead of retrying blindly.
+It writes or merges `.agent-captures/<id>.jsonl` (`.agent-captures/langfuse/<id>.jsonl` for
+Langfuse). A warning is not a failure: report it. Exit code `1` means nothing was written (no
+conversation carried the marker, or the store could not be read) and exit code `2` a usage
+error such as missing Langfuse credentials — read the message and report it instead of retrying
+blindly.

@@ -7,6 +7,7 @@ import { computeBundleHeader } from "../domain/bundleHeader.js";
 import { mergeBundles } from "../domain/mergeBundle.js";
 import { causalSortTimestamp } from "../domain/causalSort.js";
 import type { ConversationReader, CaptureRead } from "../domain/ports.js";
+import { SourceAccessError } from "../domain/sourceErrors.js";
 
 export interface ExtractOptions {
   /** When true, replace the existing bundle instead of merging with it. */
@@ -35,7 +36,8 @@ export interface ExtractResult {
  * If the fresh external-source read errors and a stored bundle exists, the
  * result degrades to stored-only (with a `fresh_read_error` warning) instead of
  * aborting — this keeps the stored bundle a recovery path. With no stored bundle to fall
- * back on (first capture), it throws.
+ * back on (first capture), it throws. A `SourceAccessError` (access refused,
+ * credentials missing) always propagates unchanged.
  *
  * The reader owns every source-specific detail (how a capture id binds to its
  * conversations, how events are read); this use-case is source-agnostic
@@ -43,11 +45,11 @@ export interface ExtractResult {
  * they are pulled in automatically by the reader — no expansion step. Re-runs
  * of a label are distinct conversations and are all kept (no dedup across labels).
  */
-export function extractBundle(
+export async function extractBundle(
   reader: ConversationReader,
   captureId: string,
   options: ExtractOptions = {}
-): ExtractResult {
+): Promise<ExtractResult> {
   const { existingBundle = null, noMerge = false } = options;
 
   // Try the fresh read from the external source. If it errors and we have a
@@ -55,8 +57,10 @@ export function extractBundle(
   let captureRead: CaptureRead | null = null;
   let freshReadError: string | null = null;
   try {
-    captureRead = reader.readCapture(captureId);
+    captureRead = await reader.readCapture(captureId);
   } catch (e) {
+    // A source that refuses access is reported, never masked by the stored bundle.
+    if (e instanceof SourceAccessError) throw e;
     freshReadError = e instanceof Error ? e.message : String(e);
   }
 

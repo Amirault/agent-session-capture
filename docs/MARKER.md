@@ -78,6 +78,9 @@ The marker is deliberately easy to _suggest_ rather than hard-code:
 - **Hermes** — an exact marker line in an assistant `terminal`/`run_shell_command` tool call
   stored in `messages.tool_calls`. Compression continuations and delegate subagents are
   expanded through `parent_session_id`.
+- **Langfuse** — an exact marker line as the `command` input of a `TOOL`/`SPAN` observation
+  named `terminal`, `run_shell_command` or `Bash`, in a runtime that traces to Langfuse. The
+  conversation is the `sessionId` of the observation's trace, else its `traceId`.
 
 Prose that merely mentions the marker never binds: a session is grouped only if it actually
 ran the command. That is deliberate — no heuristic grouping, no false positives.

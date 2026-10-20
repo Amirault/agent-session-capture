@@ -11,6 +11,8 @@ Supported sources:
 - `warp`: Warp's local SQLite database.
 - `claude-code`: Claude Code JSONL transcripts under `~/.claude/projects`.
 - `hermes`: Hermes' canonical `<HERMES_HOME>/state.db` SQLite store.
+- `langfuse`: a Langfuse project (e.g. an agent tracing from a server), read
+  through the v2 observations endpoint of `@langfuse/client`.
 
 It is schema-less where a source schema is opaque (notably Warp's protobuf
 `agent_tasks.task` blob) and read-only against the live stores.
@@ -30,6 +32,10 @@ Given a capture id (any token, e.g. `JIRA-123` or `fix-login-bug`), the adapter:
      JSONL transcript.
    - Hermes: an exact marker line in an assistant `terminal` or
      `run_shell_command` tool call stored in `messages.tool_calls`.
+   - Langfuse: an exact marker line as the `command` input of a `TOOL` or `SPAN`
+     observation named `terminal`, `run_shell_command` or `Bash`; the
+     conversation is the `sessionId` of the observation's trace (Langfuse sets it
+     on the trace's root observation only), else its `traceId`.
 2. **Reads every event** for those conversations from the selected source:
    - Claude Code `type: "user"` entries → prompts and tool results
      (`kind: "query"` / `kind: "tool_result"`)
@@ -38,6 +44,12 @@ Given a capture id (any token, e.g. `JIRA-123` or `fix-login-bug`), the adapter:
    - Hermes `user`, `assistant`, and `tool` messages → prompts, assistant text,
      tool calls, and tool results. Inactive compacted rows are retained with
      `active` / `compacted` metadata so the original learning history is not lost.
+   - Langfuse observations of the last 30 days → a root observation's input
+     (`query`), a `GENERATION` output (`agent_message`), a `TOOL`/`SPAN` input and
+     output (`tool_call` / `tool_result`, sharing `meta.tool_call_id` = observation
+     id); inputs are stamped at the observation's `startTime`, outputs
+     (`agent_message`, `tool_result`) at its `endTime` (else `startTime`), and
+     `meta.session_source` is the `agent` named in the trace root's metadata.
    - Warp reads three tables:
      - `ai_queries` → user prompts (`kind: "query"`)
      - `blocks` → shell command executions (`kind: "command"`), incl. subagent blocks
@@ -72,6 +84,9 @@ and message reads one consistent snapshot including committed WAL frames. Do not
 make a plain filesystem copy of a live WAL database for `--hermes-db-path`; use a
 SQLite backup or `VACUUM INTO` when a copied fixture is required.
 
+Langfuse is only read (`GET /api/public/v2/observations`): nothing is written to
+the project, and the keys are never printed nor written to a bundle.
+
 ---
 
 ## Prerequisites
@@ -82,6 +97,7 @@ SQLite backup or `VACUUM INTO` when a copied fixture is required.
 - Warp terminal installed and used (for `--source warp`)
 - Claude Code installed and used (for `--source claude-code`)
 - Hermes installed and used (for `--source hermes`)
+- A Langfuse project and its public/secret keys (for `--source langfuse`)
 
 For `--source warp`, the default Warp DB path is:
 
@@ -163,6 +179,26 @@ Without `HERMES_HOME`, the fallback matches Hermes itself: `~/.hermes/state.db`
 on POSIX and `%LOCALAPPDATA%\hermes\state.db` on Windows. Other profiles are not
 scanned automatically.
 
+### Extract one capture from Langfuse
+
+Reads the project's observations of the last 30 days, read-only, with
+`LANGFUSE_HOST` (default `https://cloud.langfuse.com`), `LANGFUSE_PUBLIC_KEY` and
+`LANGFUSE_SECRET_KEY`, each taken from the environment, else the `--langfuse-env`
+file, else `~/.config/langfuse/capture.env` (dotenv lines; keep it outside any
+repository). Key values are never printed nor written to a bundle.
+
+```bash
+/path/to/agent-session-capture/capture.sh --id <id> --source langfuse
+# explicit credentials file
+/path/to/agent-session-capture/capture.sh --id <id> --source langfuse --langfuse-env /path/to/capture.env
+```
+
+`capture.sh` stores Langfuse bundles in the `langfuse/` sub-store
+(`.agent-captures/langfuse/<id>.jsonl`), so an id keeps one bundle per source.
+Missing keys exit `2`; an API or network failure exits `1` naming the HTTP status
+and host (`error: Langfuse API 401 at https://cloud.langfuse.com`) and leaves the
+stored bundle untouched.
+
 Output is written to `out/<id>.jsonl` (relative to cwd), with a one-line summary:
 
 ```text
@@ -189,11 +225,11 @@ a marker was found but its binding block is gone — Warp can evict blocks rows 
 
 ### Exit codes
 
-| Code | Meaning                                                                                         |
-| ---- | ----------------------------------------------------------------------------------------------- |
-| `0`  | Bundle written.                                                                                 |
-| `1`  | Nothing written — zero conversations bound.                                                      |
-| `2`  | Usage error (bad/missing flag).                                                                 |
+| Code | Meaning                                                                    |
+| ---- | -------------------------------------------------------------------------- |
+| `0`  | Bundle written.                                                            |
+| `1`  | Nothing written — zero conversations bound, or the Langfuse API failed.    |
+| `2`  | Usage error (bad/missing flag, missing Langfuse credentials).              |
 
 ### CLI flags
 
@@ -202,10 +238,11 @@ a marker was found but its binding block is gone — Warp can evict blocks rows 
 | `--id <id>`               | Capture id to extract (required).                                                                                          |
 | `--no-merge`              | Replace the existing bundle instead of merging (default: merge decay-safe); required when intentionally switching sources. |
 | `--out <dir>`             | Output directory (default `out`; `capture.sh` defaults to the main checkout's `.agent-captures/`).                         |
-| `--source <source>`       | Conversation source: `warp`, `claude-code`, or `hermes`; required.                                           |
+| `--source <source>`       | Conversation source: `warp`, `claude-code`, `hermes`, or `langfuse`; required.                                             |
 | `--db-path <path>`        | Override the live Warp DB path (`--source warp`).                                                                          |
 | `--claude-root <dir>`     | Override Claude Code transcript root (`--source claude-code`, default `~/.claude/projects`).                               |
 | `--hermes-db-path <path>` | Override Hermes `state.db` (`--source hermes`, default `$HERMES_HOME/state.db`).                                           |
+| `--langfuse-env <file>`   | Langfuse credentials file read after the environment (`--source langfuse`, then `~/.config/langfuse/capture.env`).         |
 | `--sessions`              | Session mode: export every conversation, no marker — see [Session mode](#session-mode).                                    |
 | `--since <ISO-8601>`     | Session mode only: only conversations whose last activity is at/after the cutoff.                                        |
 | `--conversation <cid>`   | Session mode only: export exactly one conversation (debugging).                                                          |
@@ -221,8 +258,7 @@ file per conversation, without `capture_id`/`label` (a session is not a capture:
 it is every conversation in the store, not the subset a marker bound). It exists
 for history you never tagged and as a safety net against marker-binding decay.
 
-Only `--source warp` implements it for now; the CLI rejects the others with
-exit 2 (`source "…" does not support --sessions yet`).
+Every source implements it.
 
 ```bash
 npx tsx src/cli.ts --sessions --source warp
@@ -231,6 +267,47 @@ npx tsx src/cli.ts --sessions --source warp --out /tmp/sessions --db-path /path/
 # recent conversations only, or exactly one
 npx tsx src/cli.ts --sessions --source warp --since 2026-07-01
 npx tsx src/cli.ts --sessions --source warp --conversation <cid>
+```
+
+With `--source claude-code` (transcripts under `--claude-root`, default
+`~/.claude/projects`), a session is one `sessionId`: the `<session>.jsonl`
+transcript plus its `<session>/subagents/agent-*.jsonl` files, so subagent
+events join their parent's file. Its stamp is the latest mtime of those files
+(ISO-8601 UTC), and events map exactly as in marker mode:
+
+```bash
+npx tsx src/cli.ts --sessions --source claude-code --since 2026-10-01
+# wrote out/sessions/<sessionId>.jsonl (N events)
+```
+
+With `--source hermes` (`--hermes-db-path`, default `$HERMES_HOME/state.db`),
+a session is a lineage root of `sessions` plus the descendants the marker-mode
+lineage rule joins to it: compression continuations and delegate subagents
+join their root's file, while `/branch`, generic and tool children get their
+own. Its stamp is the latest message timestamp of the group (ISO-8601 UTC),
+every event carries the root's id as its conversation, and events map exactly
+as in marker mode:
+
+```bash
+npx tsx src/cli.ts --sessions --source hermes --since 2026-10-01
+# wrote out/sessions/<root session id>.jsonl (N events)
+```
+
+With `--source langfuse` (credentials as in marker mode), a session is a Langfuse
+`sessionId` — every trace whose root carries it — or a trace without session,
+named by its `traceId`. One content-less pass (`fields=core,basic,time`, from
+`--since` on, else the whole project) enumerates them; its stamp is the latest
+`updatedAt` of the observations that pass sees (ISO-8601 UTC). Only the changed
+sessions are then fetched, trace by trace (`traceId` filter), and mapped exactly
+as in marker mode. With `--since`, a trace whose root started before the cutoff
+is looked up by `traceId` to find its session, and a changed session first lists
+its roots by `sessionId`, so its file also holds its traces started before the
+cutoff. `capture.sh` stores them in the `langfuse/` sub-store
+(`.agent-captures/langfuse/sessions/<id>.jsonl`):
+
+```bash
+/path/to/agent-session-capture/capture.sh --sessions --source langfuse --since 2026-10-01
+# wrote …/.agent-captures/langfuse/sessions/<sessionId or traceId>.jsonl (N events)
 ```
 
 ### Sessions layout and incremental semantics
@@ -294,14 +371,15 @@ per line, never as bare counts.
 | Code | Meaning |
 | ---- | ------- |
 | `0`  | At least one session written, or everything already up to date. |
-| `1`  | Zero sessions enumerated (`--since` too recent, unknown `--conversation`), or a read/guard failure. |
-| `2`  | Usage error (`--id` with `--sessions`; `--since`/`--conversation` without `--sessions`; unsupported source; unparseable `--since`). |
+| `1`  | Zero sessions enumerated (`--since` too recent, unknown `--conversation`), or a read/guard failure (a Langfuse API failure included; stored files untouched). |
+| `2`  | Usage error (`--id` with `--sessions`; `--since`/`--conversation` without `--sessions`; unparseable `--since`), or missing Langfuse credentials. |
 
 ### Session limitations
 
-- **Warp only** for now. Claude Code and Hermes session adapters are follow-ups;
-  the port (`SessionReader`) is already defined alongside `ConversationReader`
-  in `src/domain/ports.ts` (see [ADAPTERS.md](ADAPTERS.md#session-mode)).
+- **Langfuse stamps with `--since`** cover the observations the windowed pass
+  sees: a later update to an observation started before the cutoff, with no
+  newer change in the window, stays stale in the file until a run without
+  `--since`.
 - **Task events carry `last_modified_at` as `ts`** — the protobuf walk has no
   per-message timestamp yet, so a session's agent messages keep their source
   order under the causal sort. A per-message timestamp patch is a planned
@@ -439,15 +517,22 @@ src/
   formatRunReport.ts              — pure CLI diagnostics: success/anomaly lines, exit code
   domain/
     models.ts                     — pure domain types
-    ports.ts                      — ConversationReader/CaptureRead (use-case port), ReadableDb,
-                                     ConversationSource, ConversationSink (Warp SQL internals)
+    ports.ts                      — ConversationReader/CaptureRead + SessionReader (use-case ports),
+                                     ReadableDb, ConversationSource, ConversationSink (Warp SQL internals)
     schemas.ts                    — zod schemas for ai_queries.input / blocks.ai_metadata
+    captureMarker.ts              — exact CAPTURE_MARKER line parser (Hermes, Langfuse)
+    skipUnchanged.ts              — shouldGather: the skip-unchanged rule shared by every SessionReader
+    sourceErrors.ts               — SourceAccessError / SourceConfigurationError: never masked by a stored bundle
   usecases/
     extractBundle.ts              — orchestration: reader.readCapture → classify → order → header
+    extractSessions.ts            — sessions orchestration: enumerate → gather changed → merge → write
   adapters/
-    claudeCodeTranscriptReader.ts — Claude Code JSONL transcript reader
-    hermesConversationReader.ts   — Hermes state.db reader + marker/lineage binding
-    warpConversationReader.ts     — ConversationReader impl: binds markers + gathers events
+    claudeCodeTranscriptReader.ts — Claude Code JSONL transcript reader, enumerates sessions by sessionId
+    hermesConversationReader.ts   — Hermes state.db reader + marker/lineage binding, enumerates sessions by lineage root
+    langfuseConversationReader.ts — Langfuse observations → marker binding + events, sessions (client injected)
+    langfuseObservationClient.ts  — only @langfuse/client importer: credentials, v2 pagination, API errors
+    langfuseObservationLister.ts  — LangfuseObservation + the lister port the reader needs, the client implements
+    warpConversationReader.ts     — ConversationReader + SessionReader impl: binds markers, gathers events, enumerates sessions
     warpSqliteAdapter.ts          — live DB discovery + VACUUM INTO snapshot
     sqliteReadableDb.ts           — better-sqlite3 → ReadableDb port
     jsonlSink.ts                  — CaptureBundle → strict JSONL file
@@ -466,8 +551,8 @@ src/
   __tests__/                       — vitest, Given/When/Then
 ```
 
-The use-case depends only on `ConversationReader`; Warp, Claude Code, and Hermes
-are sibling adapters implementing the same port.
+The use cases depend only on the ports; Warp, Claude Code, Hermes and Langfuse
+are sibling adapters implementing both `ConversationReader` and `SessionReader`.
 
 ## Develop
 
@@ -489,8 +574,9 @@ uses a small hand-trimmed schema (`src/__tests__/fixtures/testProtoSchema.ts`) v
 alias. To bump the rev, change `SCHEMA_REV` in `scripts/gen-schema-lookup.ts` and re-run the
 generator; it needs only `protobufjs` (a devDependency) — no `protoc`.
 
-Tests use in-process file-backed fixture DBs (no real Warp DB needed) and follow
-Given/When/Then.
+Tests use in-process file-backed fixture DBs (no real Warp DB needed) and an
+in-memory or loopback (`127.0.0.1`) fake of the Langfuse v2 endpoint (never the
+real API), and follow Given/When/Then.
 
 ## Limitations
 
