@@ -66,7 +66,10 @@ if needs_build; then
     fi
   else
     echo "capture.sh: building the release binary..." >&2
-    run cargo build --release --locked --quiet --manifest-path "${TOOL_DIR}/Cargo.toml" >&2 ||
+    # Pin the target dir: a CARGO_TARGET_DIR or build.target-dir set elsewhere would build
+    # the binary away from ${BIN} and force a rebuild on every run.
+    run cargo build --release --locked --quiet --manifest-path "${TOOL_DIR}/Cargo.toml" \
+      --target-dir "${TOOL_DIR}/target" >&2 ||
       { echo "capture.sh: cargo build failed in ${TOOL_DIR}" >&2; exit 1; }
   fi
 fi
