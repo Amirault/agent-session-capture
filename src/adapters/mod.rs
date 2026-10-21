@@ -13,6 +13,7 @@ pub mod jsonl_sink;
 pub mod langfuse_conversation_reader;
 pub mod langfuse_observation_client;
 pub mod langfuse_observation_lister;
+pub mod parallel;
 pub mod proto_schema;
 pub mod protobuf_walk;
 pub mod readers;

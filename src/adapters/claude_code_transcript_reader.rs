@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 
 use super::jsonl_bundle_reader::read_text;
+use super::parallel::parallel_map;
 use super::readers::marker_reader::parse_marker;
 use crate::domain::merge_bundle::stable_sort_by;
 use crate::domain::models::{BundleSource, EventDraft, EventKind, Label, Role, SessionInfo, SkippedRow};
@@ -58,7 +59,6 @@ impl ClaudeCodeTranscriptReader {
 impl ConversationReader for ClaudeCodeTranscriptReader {
     fn read_capture(&self, capture_id: &str) -> Result<CaptureRead, ReadError> {
         let files = list_jsonl_files(&self.root_dir);
-        let mut records = Vec::new();
         let mut skipped = Vec::new();
         if fs::metadata(&self.root_dir).is_err() {
             skipped.push(SkippedRow::new(
@@ -67,25 +67,42 @@ impl ConversationReader for ClaudeCodeTranscriptReader {
                 self.root_dir.clone(),
             ));
         }
-        for file in &files {
-            let (file_records, file_skipped) = read_jsonl(file)?;
-            spread_push(&mut records, file_records).map_err(ReadError::Other)?;
-            spread_push(&mut skipped, file_skipped).map_err(ReadError::Other)?;
+        // Pass 1: keep only the marker records and which conversations each file
+        // holds, so the whole store is never held in memory at once.
+        let scanned = parallel_map(&files, |file| scan_file(file, capture_id));
+        let mut marker_records = Vec::new();
+        let mut keys_by_file: Vec<HashSet<(String, Option<String>)>> = Vec::with_capacity(files.len());
+        for result in scanned {
+            let scan = result?;
+            spread_push(&mut skipped, scan.skipped).map_err(ReadError::Other)?;
+            marker_records.extend(scan.marker_records);
+            keys_by_file.push(scan.keys);
         }
 
-        let split_sessions = multi_label_sessions(&find_marker_hits(&records, capture_id, &HashSet::new()));
-        let marker_hits = find_marker_hits(&records, capture_id, &split_sessions);
+        let split_sessions = multi_label_sessions(&find_marker_hits(&marker_records, capture_id, &HashSet::new()));
+        let marker_hits = find_marker_hits(&marker_records, capture_id, &split_sessions);
         let label_by_cid = bind_labels(&marker_hits, &mut skipped);
         let bound: HashSet<String> = label_by_cid.keys().cloned().collect();
+
+        // Pass 2: map the records of the files that hold a bound conversation.
         let mut drafts = Vec::new();
-        for record in &records {
-            drafts.extend(drafts_from_record(
-                record,
-                &bound,
-                &split_sessions,
-                &self.root_dir,
-                &mut skipped,
-            ));
+        for (file, keys) in files.iter().zip(&keys_by_file) {
+            let relevant = keys.iter().any(|(session, agent)| {
+                bound.contains(&key_conversation_id(session, agent.as_deref(), &split_sessions))
+            });
+            if !relevant {
+                continue;
+            }
+            let (records, _) = read_jsonl(file)?;
+            for record in &records {
+                drafts.extend(drafts_from_record(
+                    record,
+                    &bound,
+                    &split_sessions,
+                    &self.root_dir,
+                    &mut skipped,
+                ));
+            }
         }
         Ok(CaptureRead {
             source: BundleSource::ClaudeCode,
@@ -114,14 +131,10 @@ impl SessionReader for ClaudeCodeTranscriptReader {
             selected.retain(|s| date::parse(&s.stamp) >= cutoff);
         }
         let mut reads = OrderedMap::new();
-        for session in &selected {
-            if !should_gather(&session.info, options) {
-                continue;
-            }
-            reads.insert(
-                session.info.conversation_id.clone(),
-                gather_session(session, &self.root_dir)?,
-            );
+        let to_gather: Vec<&SessionFiles> = selected.iter().filter(|s| should_gather(&s.info, options)).collect();
+        let gathered = parallel_map(&to_gather, |session| gather_session(session, &self.root_dir));
+        for (session, gather) in to_gather.iter().zip(gathered) {
+            reads.insert(session.info.conversation_id.clone(), gather?);
         }
         Ok(SessionsRead {
             source: BundleSource::ClaudeCode,
@@ -517,6 +530,53 @@ fn content_text(value: Option<&Value>) -> String {
         },
         None | Some(Value::Null) => String::new(),
         Some(other) => other.to_json(),
+    }
+}
+
+/// What pass 1 keeps of one transcript file.
+struct FileScan {
+    skipped: Vec<SkippedRow>,
+    marker_records: Vec<JsonlRecord>,
+    keys: HashSet<(String, Option<String>)>,
+}
+
+fn scan_file(file: &str, capture_id: &str) -> Result<FileScan, ReadError> {
+    let (records, skipped) = read_jsonl(file)?;
+    if records.len() > crate::js::MAX_SPREAD_ARGUMENTS {
+        return Err(ReadError::Other("Maximum call stack size exceeded".to_string()));
+    }
+    let mut keys = HashSet::new();
+    let mut marker_records = Vec::new();
+    for record in records {
+        keys.insert(conversation_key(&record));
+        let is_marker = marker_candidate_texts(&record.value)
+            .iter()
+            .any(|c| parse_marker(c).is_some_and(|m| m.capture_id == capture_id));
+        if is_marker {
+            marker_records.push(record);
+        }
+    }
+    Ok(FileScan {
+        skipped,
+        marker_records,
+        keys,
+    })
+}
+
+/// The (sessionId, agentId) a record's conversation id derives from.
+fn conversation_key(record: &JsonlRecord) -> (String, Option<String>) {
+    let session_id = record
+        .value
+        .get_str("sessionId")
+        .map(str::to_string)
+        .unwrap_or_else(|| path::basename_without(&record.file_path, ".jsonl").to_string());
+    (session_id, record.value.get_str("agentId").map(str::to_string))
+}
+
+fn key_conversation_id(session_id: &str, agent_id: Option<&str>, split_sessions: &HashSet<String>) -> String {
+    match agent_id {
+        Some(agent_id) if split_sessions.contains(session_id) => format!("{session_id}/agent-{agent_id}"),
+        _ => session_id.to_string(),
     }
 }
 

@@ -71,7 +71,7 @@ impl Cell {
 
 /// One result row: cells in column order, addressable by column name.
 pub struct Row {
-    names: std::rc::Rc<Vec<String>>,
+    names: std::sync::Arc<Vec<String>>,
     cells: Vec<Cell>,
 }
 
@@ -122,8 +122,8 @@ impl ReadableDb {
     /// `db.prepare(sql).all(...params)`.
     pub fn all(&self, sql: &str, params: &[&dyn ToSql]) -> Result<Vec<Row>, ReadError> {
         let mut statement = self.conn.prepare_cached(sql)?;
-        let names: std::rc::Rc<Vec<String>> =
-            std::rc::Rc::new(statement.column_names().iter().map(|n| n.to_string()).collect());
+        let names: std::sync::Arc<Vec<String>> =
+            std::sync::Arc::new(statement.column_names().iter().map(|n| n.to_string()).collect());
         let width = names.len();
         let mut rows = statement.query(params)?;
         let mut out = Vec::new();

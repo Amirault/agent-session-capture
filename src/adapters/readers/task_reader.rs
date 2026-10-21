@@ -6,6 +6,7 @@ use super::{cell_display, in_list};
 use crate::adapters::collapse_deltas::collapse_deltas;
 use crate::adapters::compact::compact_nodes;
 use crate::adapters::envelope_dedupe::{EnvelopeDedupeState, dedupe_envelope};
+use crate::adapters::parallel::parallel_map;
 use crate::adapters::protobuf_walk::walk_protobuf;
 use crate::adapters::schema_overlay::apply_schema_names;
 use crate::adapters::sqlite_readable_db::ReadableDb;
@@ -33,20 +34,34 @@ pub fn read_tasks(db: &ReadableDb, conversation_ids: &[String]) -> Result<Reader
 
     let mut result = ReaderResult::default();
     let mut envelope_states: HashMap<String, EnvelopeDedupeState> = HashMap::new();
-    for row in rows {
-        let task_id = cell_display(row.get("task_id"));
+    // Walking and collapsing a blob is pure and CPU-bound: do it on all cores,
+    // then dedupe envelopes in row order (that state is sequential).
+    let walks = parallel_map(&rows, |row| {
         let task = row.get("task").bytes().unwrap_or_default();
         if task.is_empty() {
+            return None;
+        }
+        Some(walk_protobuf(&task).map(|walked| {
+            let complete = walked.complete;
+            (
+                collapse_deltas(&apply_schema_names(compact_nodes(walked.nodes))),
+                complete,
+            )
+        }))
+    });
+    for (row, walk) in rows.iter().zip(walks) {
+        let task_id = cell_display(row.get("task_id"));
+        let Some(walk) = walk else {
             result.skipped.push(SkippedRow::new(
                 "agent_tasks",
                 "empty task",
                 format!("task_id={task_id}"),
             ));
             continue;
-        }
+        };
         let conversation_id = cell_display(row.get("conversation_id"));
         let ts = cell_display(row.get("last_modified_at"));
-        let walked = match walk_protobuf(&task) {
+        let (collapsed, complete) = match walk {
             Ok(walked) => walked,
             Err(error) => {
                 result.skipped.push(SkippedRow::new(
@@ -58,7 +73,6 @@ pub fn read_tasks(db: &ReadableDb, conversation_ids: &[String]) -> Result<Reader
             }
         };
         let state = envelope_states.entry(conversation_id.clone()).or_default();
-        let collapsed = collapse_deltas(&apply_schema_names(compact_nodes(walked.nodes)));
         for (task_event_index, node) in collapsed.iter().enumerate() {
             let Some(node) = dedupe_envelope(node, state) else {
                 continue;
@@ -95,7 +109,7 @@ pub fn read_tasks(db: &ReadableDb, conversation_ids: &[String]) -> Result<Reader
             if node.named.schema_mismatch {
                 meta.insert("confidence", "schema-mismatch");
             }
-            if !walked.complete && !meta.contains_key("confidence") {
+            if !complete && !meta.contains_key("confidence") {
                 meta.insert("confidence", "heuristic");
             }
             result.drafts.push(EventDraft {
