@@ -8,7 +8,7 @@ Claude Code · Hermes · Warp · Langfuse → one chronological, greppable JSONL
 
 [![CI](https://github.com/Amirault/agent-session-capture/actions/workflows/ci.yml/badge.svg)](https://github.com/Amirault/agent-session-capture/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.2-3c873a)
+![Rust](https://img.shields.io/badge/rust-stable-b7410e)
 
 </div>
 
@@ -37,11 +37,11 @@ the prompts, commands and export output are real.
 
 ## ⚡ In 60 seconds
 
-**0 · Install once** (Node ≥ 22.2)
+**0 · Install once** ([Rust](https://rustup.rs) toolchain, for `cargo`)
 
 ```bash
 git clone https://github.com/Amirault/agent-session-capture.git ~/tools/agent-session-capture
-cd ~/tools/agent-session-capture && npm install
+cd ~/tools/agent-session-capture && cargo build --release   # optional: capture.sh builds it on first use
 ```
 
 **1 · Tag the session** — paste this into your agent chat, changing the name:
@@ -223,6 +223,28 @@ the **main checkout's** `.agent-captures/`, so they outlive the worktree.
 </details>
 
 <details>
+<summary><b>⚡ Performance</b></summary>
+
+The tool was first written in TypeScript and rewritten in Rust with byte-identical output (same
+flags, exit codes, messages and files). On one developer's real stores (Apple M5, `hyperfine
+--warmup 1`, release build, mean wall time):
+
+| Run | TypeScript (Node 24) | Rust | Peak memory TS → Rust |
+| --- | --- | --- | --- |
+| Claude Code `--id`, 1.1 GB of transcripts | 3.27 s | 0.44 s (7.5×) | 1.9 GiB → 249 MiB |
+| Claude Code `--id`, merge into an existing bundle | 3.29 s | 0.45 s (7.2×) | 1.9 GiB → 265 MiB |
+| Claude Code `--sessions`, 274 sessions | 4.12 s | 1.37 s (3.0×) | 1.4 GiB → 959 MiB |
+| Warp `--id`, 556 MB database | 1.22 s | 0.93 s (1.3×) | 532 → 321 MiB |
+| Warp `--sessions`, 200 conversations | 11.2 s | 9.3 s (1.2×) | 1.6 GiB → 1.0 GiB |
+| Startup (usage error) | 140 ms | 3 ms | 98 → 2 MiB |
+
+Warp runs are dominated by SQLite's read-only `VACUUM INTO` snapshot, the same work in both. The
+release binary is a single 4.5 MB file (SQLite bundled); a cold `cargo build --release` takes about
+25 s.
+
+</details>
+
+<details>
 <summary><b>📚 Docs, development & license</b></summary>
 
 - [The `CAPTURE_MARKER` convention](docs/MARKER.md) — format, emission rules, how each runtime binds it
@@ -230,12 +252,13 @@ the **main checkout's** `.agent-captures/`, so they outlive the worktree.
 - [Reference](docs/REFERENCE.md) — CLI flags, exit codes, output schema, limitations
 
 **Warp schema (AGPL).** The Warp protobuf schemas are not vendored. Without them Warp assistant
-text is still recovered, with numbered field paths; run `npm run gen:schema` to download them and
-get readable paths ([details](docs/REFERENCE.md#develop)).
+text is still recovered, with numbered field paths; run `cargo run --example gen-schema-lookup`
+to download them and get readable paths, then rebuild ([details](docs/REFERENCE.md#develop)).
 
 ```bash
-npm test            # fixture-based, no real session store needed
-npm run typecheck
+cargo test                                   # fixture-based, no real session store needed
+cargo clippy --all-targets -- -D warnings
+cargo install --locked --path .              # the raw agent-session-capture binary on your PATH
 ```
 
 [MIT](LICENSE) — made by [@Amirault](https://github.com/Amirault).
