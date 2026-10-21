@@ -43,7 +43,13 @@ pub struct FakeServerOptions {
 
 impl Default for FakeServerOptions {
     fn default() -> Self {
-        Self { observations: vec![], page_size: 1000, fail_with: None, last_page_meta: "{}".to_string(), max_requests: 100 }
+        Self {
+            observations: vec![],
+            page_size: 1000,
+            fail_with: None,
+            last_page_meta: "{}".to_string(),
+            max_requests: 100,
+        }
     }
 }
 
@@ -76,7 +82,7 @@ fn decode(component: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn field<'a>(observation: &'a str, key: &str) -> Option<String> {
+fn field(observation: &str, key: &str) -> Option<String> {
     let parsed = crate_json_parse(observation);
     parsed.into_iter().find(|(k, _)| k == key).map(|(_, v)| v)
 }
@@ -86,7 +92,11 @@ fn crate_json_parse(text: &str) -> Vec<(String, String)> {
     let value = crate::js::json::parse(text).expect("observation JSON");
     value
         .as_object()
-        .map(|o| o.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -125,13 +135,19 @@ pub fn start_fake_langfuse(options: FakeServerOptions) -> FakeLangfuseServer {
                     (decode(k), decode(v))
                 })
                 .collect();
-            let request = RecordedRequest { path: path.to_string(), query, authorized: authorization == EXPECTED_AUTH };
+            let request = RecordedRequest {
+                path: path.to_string(),
+                query,
+                authorized: authorization == EXPECTED_AUTH,
+            };
             let count = {
                 let mut all = recorded.lock().expect("lock");
                 all.push(request.clone());
                 all.len()
             };
-            let status = options.fail_with.or(if count > options.max_requests { Some(418) } else { None });
+            let status = options
+                .fail_with
+                .or(if count > options.max_requests { Some(418) } else { None });
             let (status, body) = match status {
                 Some(status) => (status, "{\"message\":\"Invalid credentials\"}".to_string()),
                 None => {
@@ -139,18 +155,34 @@ pub fn start_fake_langfuse(options: FakeServerOptions) -> FakeLangfuseServer {
                         .observations
                         .iter()
                         .filter(|o| {
-                            request.param("traceId").is_none_or(|t| field(o, "traceId").as_deref() == Some(t))
-                                && request.param("sessionId").is_none_or(|s| field(o, "sessionId").as_deref() == Some(s))
+                            request
+                                .param("traceId")
+                                .is_none_or(|t| field(o, "traceId").as_deref() == Some(t))
+                                && request
+                                    .param("sessionId")
+                                    .is_none_or(|s| field(o, "sessionId").as_deref() == Some(s))
                                 && request
                                     .param("fromStartTime")
                                     .is_none_or(|f| field(o, "startTime").is_some_and(|st| st.as_str() >= f))
                         })
                         .collect();
-                    let offset: usize =
-                        request.param("cursor").and_then(|c| c.strip_prefix("page-")).and_then(|n| n.parse().ok()).unwrap_or(0);
+                    let offset: usize = request
+                        .param("cursor")
+                        .and_then(|c| c.strip_prefix("page-"))
+                        .and_then(|n| n.parse().ok())
+                        .unwrap_or(0);
                     let next = offset + options.page_size;
-                    let page: Vec<&str> = matching.iter().skip(offset).take(options.page_size).map(|s| s.as_str()).collect();
-                    let meta = if next < matching.len() { format!("{{\"cursor\":\"page-{next}\"}}") } else { options.last_page_meta.clone() };
+                    let page: Vec<&str> = matching
+                        .iter()
+                        .skip(offset)
+                        .take(options.page_size)
+                        .map(|s| s.as_str())
+                        .collect();
+                    let meta = if next < matching.len() {
+                        format!("{{\"cursor\":\"page-{next}\"}}")
+                    } else {
+                        options.last_page_meta.clone()
+                    };
                     (200, format!("{{\"data\":[{}],\"meta\":{meta}}}", page.join(",")))
                 }
             };

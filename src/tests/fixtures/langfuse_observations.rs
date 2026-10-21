@@ -41,7 +41,11 @@ pub fn terminal_call(command: &str, overrides: &[(&str, Value)]) -> Object {
     input.insert("command", command);
     let base = with(
         any_observation(),
-        &[("type", "TOOL".into()), ("name", "terminal".into()), ("input", Value::from(input.to_json()))],
+        &[
+            ("type", "TOOL".into()),
+            ("name", "terminal".into()),
+            ("input", Value::from(input.to_json())),
+        ],
     );
     with(base, overrides)
 }
@@ -50,7 +54,11 @@ pub fn terminal_call(command: &str, overrides: &[(&str, Value)]) -> Object {
 pub fn generation(text: &str, overrides: &[(&str, Value)]) -> Object {
     let base = with(
         any_observation(),
-        &[("type", "GENERATION".into()), ("name", "llm".into()), ("output", Value::from(json::quote(text)))],
+        &[
+            ("type", "GENERATION".into()),
+            ("name", "llm".into()),
+            ("output", Value::from(json::quote(text))),
+        ],
     );
     with(base, overrides)
 }

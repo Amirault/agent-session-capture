@@ -102,7 +102,10 @@ pub fn create_fixture(path: &str, wal: bool) -> Connection {
 
 /// Mimic Warp's per-character bold styling so ANSI stripping is exercised.
 pub fn ansi_wrap(text: &str) -> Vec<u8> {
-    text.chars().map(|c| format!("\x1b[1m{c}\x1b[0m")).collect::<String>().into_bytes()
+    text.chars()
+        .map(|c| format!("\x1b[1m{c}\x1b[0m"))
+        .collect::<String>()
+        .into_bytes()
 }
 
 /// Options of [`seed_marker`].
@@ -122,7 +125,10 @@ pub fn seed_marker(db: &Connection, seed: MarkerSeed<'_>) {
         params![command, seed.start_ts],
     )
     .expect("insert command");
-    let metadata = format!("{{\"conversation_id\":\"{}\",\"subagent_task_id\":null}}", seed.conversation_id);
+    let metadata = format!(
+        "{{\"conversation_id\":\"{}\",\"subagent_task_id\":null}}",
+        seed.conversation_id
+    );
     db.execute(
         "INSERT INTO blocks (pane_leaf_uuid, stylized_command, stylized_output, pwd, git_branch, exit_code, did_execute, start_ts, completed_ts, ai_metadata, git_branch_name)
          VALUES (?, ?, ?, '/repo', 'main', 0, 1, ?, ?, ?, 'main')",
@@ -154,7 +160,10 @@ pub struct QuerySeed<'a> {
 
 pub fn seed_query(db: &Connection, seed: QuerySeed<'_>) {
     let input = format!("[{{\"Query\":{{\"text\":{}}}}}]", crate_quote(seed.text));
-    let exchange = seed.exchange_id.map(str::to_string).unwrap_or_else(|| format!("{}-ex", seed.conversation_id));
+    let exchange = seed
+        .exchange_id
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{}-ex", seed.conversation_id));
     db.execute(
         "INSERT INTO ai_queries (exchange_id, conversation_id, start_ts, input, working_directory, output_status, model_id)
          VALUES (?, ?, ?, ?, ?, '', ?)",
@@ -211,7 +220,10 @@ pub fn seed_block(db: &Connection, seed: BlockSeed<'_>) {
     let plain = seed.ansi == Some(false);
     let styled = |t: &str| if plain { t.as_bytes().to_vec() } else { ansi_wrap(t) };
     let subagent = seed.subagent_task_id.map_or("null".to_string(), crate_quote);
-    let metadata = format!("{{\"conversation_id\":{},\"subagent_task_id\":{subagent}}}", crate_quote(seed.conversation_id));
+    let metadata = format!(
+        "{{\"conversation_id\":{},\"subagent_task_id\":{subagent}}}",
+        crate_quote(seed.conversation_id)
+    );
     let branch = seed.git_branch.unwrap_or("main");
     db.execute(
         "INSERT INTO blocks (pane_leaf_uuid, stylized_command, stylized_output, pwd, git_branch, exit_code, did_execute, start_ts, completed_ts, ai_metadata, git_branch_name)
@@ -237,17 +249,33 @@ pub fn seed_block(db: &Connection, seed: BlockSeed<'_>) {
 pub fn seed_conversation(db: &Connection, conversation_id: &str, last_modified_at: Option<&str>) {
     db.execute(
         "INSERT INTO agent_conversations (conversation_id, conversation_data, last_modified_at) VALUES (?, '{}', ?)",
-        params![conversation_id, last_modified_at.unwrap_or("2026-06-30 12:00:00.000000")],
+        params![
+            conversation_id,
+            last_modified_at.unwrap_or("2026-06-30 12:00:00.000000")
+        ],
     )
     .expect("insert conversation");
 }
 
 /// Seed an agent_tasks row; `None` fields take the original defaults.
-pub fn seed_task(db: &Connection, conversation_id: &str, task: &[u8], task_id: Option<&str>, last_modified_at: Option<&str>) {
-    let task_id = task_id.map(str::to_string).unwrap_or_else(|| format!("{conversation_id}-task"));
+pub fn seed_task(
+    db: &Connection,
+    conversation_id: &str,
+    task: &[u8],
+    task_id: Option<&str>,
+    last_modified_at: Option<&str>,
+) {
+    let task_id = task_id
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{conversation_id}-task"));
     db.execute(
         "INSERT INTO agent_tasks (conversation_id, task_id, task, last_modified_at) VALUES (?, ?, ?, ?)",
-        params![conversation_id, task_id, task, last_modified_at.unwrap_or("2026-06-30 12:00:00.000000")],
+        params![
+            conversation_id,
+            task_id,
+            task,
+            last_modified_at.unwrap_or("2026-06-30 12:00:00.000000")
+        ],
     )
     .expect("insert task");
 }

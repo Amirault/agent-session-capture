@@ -11,7 +11,9 @@ pub struct FakeSource {
 
 /// Wrap a fixture DB file (opened read-write so tests can keep seeding).
 pub fn fake_source(path: &str) -> FakeSource {
-    FakeSource { db: ReadableDb::new(rusqlite::Connection::open(path).expect("open fixture")) }
+    FakeSource {
+        db: ReadableDb::new(rusqlite::Connection::open(path).expect("open fixture")),
+    }
 }
 
 impl ConversationSource for FakeSource {

@@ -16,7 +16,10 @@ impl TempDir {
     pub fn new(prefix: &str) -> Self {
         let base = std::env::temp_dir();
         for attempt in 0..1000u32 {
-            let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos();
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos();
             let dir = base.join(format!("{prefix}{}-{nanos}-{attempt}", std::process::id()));
             if std::fs::create_dir(&dir).is_ok() {
                 return Self(dir);
