@@ -1,9 +1,5 @@
-node_modules/
-dist/
+/target/
+/generated/
 *.jsonl
 .tmp/
-.coverage/
-*.tsbuildinfo
 .agent-captures/
-target/
-generated/
