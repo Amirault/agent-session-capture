@@ -8,7 +8,7 @@ authors = ["Tony Amirault"]
 repository = "https://github.com/Amirault/agent-session-capture"
 keywords = ["ai-agents", "claude-code", "warp", "session-capture", "transcripts"]
 categories = ["command-line-utilities", "development-tools"]
-rust-version = "1.85"
+rust-version = "1.88"
 
 [[bin]]
 name = "agent-session-capture"

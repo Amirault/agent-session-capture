@@ -92,7 +92,7 @@ fn printable_ratio(s: &str) -> f64 {
 
 /// Only base64 alphabet characters (and `=`), length a positive multiple of 4.
 pub fn looks_like_base64(s: &str) -> bool {
-    if s.len() < 4 || s.len() % 4 != 0 {
+    if s.len() < 4 || !s.len().is_multiple_of(4) {
         return false;
     }
     s.bytes()

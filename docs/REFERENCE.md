@@ -93,7 +93,7 @@ the project, and the keys are never printed nor written to a bundle.
 
 - macOS for Warp's default DB path (Claude Code and Hermes extraction work on any
   platform with a readable source store)
-- A Rust toolchain (`cargo`, stable >= 1.85) to build the binary, or a prebuilt binary
+- A Rust toolchain (`cargo`, stable >= 1.88) to build the binary, or a prebuilt binary
 - Warp terminal installed and used (for `--source warp`)
 - Claude Code installed and used (for `--source claude-code`)
 - Hermes installed and used (for `--source hermes`)
