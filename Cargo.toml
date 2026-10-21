@@ -1,0 +1,23 @@
+[package]
+name = "agent-session-capture"
+version = "0.2.0"
+edition = "2024"
+description = "Export every coding-agent conversation tagged with an id — from Claude Code, Hermes, Warp or Langfuse — as one chronological JSONL, using a shareable CAPTURE_MARKER no-op."
+license = "MIT"
+authors = ["Tony Amirault"]
+repository = "https://github.com/Amirault/agent-session-capture"
+keywords = ["ai-agents", "claude-code", "warp", "session-capture", "transcripts"]
+categories = ["command-line-utilities", "development-tools"]
+rust-version = "1.85"
+
+[[bin]]
+name = "agent-session-capture"
+path = "src/main.rs"
+
+[dependencies]
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+ureq = "3.4.2"
+
+[profile.release]
+lto = true
+codegen-units = 1

@@ -5,3 +5,5 @@ dist/
 .coverage/
 *.tsbuildinfo
 .agent-captures/
+target/
+generated/
