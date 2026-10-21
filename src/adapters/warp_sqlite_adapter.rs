@@ -40,20 +40,49 @@ impl WarpSqliteAdapter {
     }
 }
 
-/// A fresh private directory under the system temp dir (`mkdtemp`).
+/// A fresh private directory under the system temp dir, like `mkdtemp`:
+/// an unpredictable name, created exclusively with mode 0700 so the DB
+/// snapshot inside it is never readable by other users.
 fn make_temp_dir(prefix: &str) -> Result<String, ReadError> {
+    use std::os::unix::fs::DirBuilderExt;
     let base = std::env::temp_dir();
-    for attempt in 0..100u32 {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos();
-        let dir = base.join(format!("{prefix}{:x}{:x}{attempt}", std::process::id(), nanos));
-        if fs::create_dir(&dir).is_ok() {
-            return Ok(dir.to_string_lossy().into_owned());
+    let mut builder = fs::DirBuilder::new();
+    builder.mode(0o700);
+    for _ in 0..100u32 {
+        let dir = base.join(format!("{prefix}{}", random_suffix()));
+        match builder.create(&dir) {
+            Ok(()) => return Ok(dir.to_string_lossy().into_owned()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(ReadError::Other(format!("could not create a snapshot directory: {e}")));
+            }
         }
     }
     Err(ReadError::Other("could not create a snapshot directory".to_string()))
+}
+
+/// 128 random bits as hex, from the OS CSPRNG (`/dev/urandom`).
+fn random_suffix() -> String {
+    use std::io::Read;
+    let mut bytes = [0u8; 16];
+    if fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut bytes))
+        .is_err()
+    {
+        // Fallback: std's per-process random hash keys, mixed with the clock.
+        use std::hash::{BuildHasher, Hasher};
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        for chunk in bytes.chunks_mut(8) {
+            let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+            hasher.write_u128(nanos);
+            hasher.write_u32(std::process::id());
+            chunk.copy_from_slice(&hasher.finish().to_le_bytes());
+        }
+    }
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 impl ConversationSource for WarpSqliteAdapter {
@@ -90,5 +119,29 @@ impl ConversationSource for WarpSqliteAdapter {
         let _ = fs::remove_file(&snap_path);
         let _ = fs::remove_dir_all(&snap_dir);
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::make_temp_dir;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn snapshot_temp_dir_is_private_to_the_owner() {
+        let dir = make_temp_dir("warp-snap-test-").expect("temp dir");
+        let mode = fs::metadata(&dir).expect("metadata").permissions().mode() & 0o777;
+        fs::remove_dir_all(&dir).expect("cleanup");
+        assert_eq!(mode, 0o700, "snapshot dir mode is {mode:o}");
+    }
+
+    #[test]
+    fn snapshot_temp_dirs_get_distinct_names() {
+        let first = make_temp_dir("warp-snap-test-").expect("temp dir");
+        let second = make_temp_dir("warp-snap-test-").expect("temp dir");
+        fs::remove_dir_all(&first).expect("cleanup");
+        fs::remove_dir_all(&second).expect("cleanup");
+        assert_ne!(first, second);
     }
 }
