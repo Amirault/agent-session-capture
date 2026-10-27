@@ -93,7 +93,10 @@ fn given_a_run_when_mapped_should_emit_query_message_command_and_tool_events_in_
         ]
     );
     assert!(drafts.iter().all(|d| d.conversation_id == CONVERSATION_ID));
-    assert!(drafts.iter().all(|d| meta_str(d, "model") == Some(MODEL_ID)));
+    for d in &drafts {
+        let expected = (d.role == Role::Assistant).then_some(MODEL_ID);
+        assert_eq!(meta_str(d, "model"), expected, "{:?}", d.kind);
+    }
     assert!(drafts.iter().all(|d| meta_str(d, "run_id") == Some(RUN_ID)));
     assert_eq!(meta_str(&drafts[0], "exchange_id"), Some("req-1"));
     assert_eq!(meta_str(&drafts[4], "exchange_id"), Some("req-2"));

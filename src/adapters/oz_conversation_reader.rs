@@ -221,7 +221,7 @@ pub fn drafts_from_run(run: &Object, conversation: &Object) -> Vec<EventDraft> {
     let mut drafts = Vec::new();
     for (ts, message) in messages(conversation) {
         let mut base = Object::new();
-        if let Some(model) = model {
+        if let Some(model) = model.filter(|_| message.get_str("role") == Some("assistant")) {
             base.insert("model", model.clone());
         }
         if let Some(request_id) = message.get("request_id").filter(|v| !v.is_null()) {

@@ -62,9 +62,9 @@ Given a capture id (any token, e.g. `JIRA-123` or `fix-login-bug`), the adapter:
      (its `id`) and `meta.fields` (its `input`); a `tool` `action_result` is a
      `tool_result` with `meta.tool_call_id` (`action_id`) and, for a finished
      command, `content` = `command_finished.output` and `meta.exit_code`, else
-     the JSON `output`. Every event carries `meta.model` (the run's
-     `agent_config.model_id`), `meta.exchange_id` (the message's `request_id`)
-     and `meta.run_id`; the first one also `meta.usage`, the run's
+     the JSON `output`. Assistant events carry `meta.model` (the run's
+     `agent_config.model_id`); every event carries `meta.exchange_id` (the
+     message's `request_id`) and `meta.run_id`; the first one also `meta.usage`, the run's
      `request_usage`. `ts` is the message `timestamp`, its fraction padded to
      nine digits so it sorts as text. Other content (`system` todo events) is
      not exported. Long values are truncated as in Compaction below.
