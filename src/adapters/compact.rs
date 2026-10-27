@@ -40,16 +40,25 @@ pub fn compact_nodes(nodes: Vec<WalkNode>) -> Vec<WalkNode> {
     }
 
     for node in &mut survivors {
-        let length = utf16_len(&node.value);
-        if length > TRUNCATE_THRESHOLD {
-            let head = utf16_slice(&node.value, 0, TRUNCATE_HEAD);
-            let tail = utf16_slice(&node.value, length - TRUNCATE_TAIL, length);
-            node.value = format!("{head}…[truncated len={length}]…{tail}");
+        if let Some((value, length)) = truncate_long(&node.value) {
+            node.value = value;
             node.truncated = true;
             node.original_len = Some(length);
         }
     }
     survivors
+}
+
+/// A value longer than the threshold as `head + …[truncated len=N]… + tail`,
+/// with its original length; `None` when it is short enough to keep whole.
+pub fn truncate_long(value: &str) -> Option<(String, usize)> {
+    let length = utf16_len(value);
+    if length <= TRUNCATE_THRESHOLD {
+        return None;
+    }
+    let head = utf16_slice(value, 0, TRUNCATE_HEAD);
+    let tail = utf16_slice(value, length - TRUNCATE_TAIL, length);
+    Some((format!("{head}…[truncated len={length}]…{tail}"), length))
 }
 
 /// True for the canonical 8-4-4-4-12 hex UUID form.
