@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # capture.sh — run agent-session-capture from any directory of your project.
 #
-# Usage: capture.sh --id <capture-id> --source warp|claude-code|hermes|langfuse [cli flags...]
-#        capture.sh --sessions --source warp|claude-code|hermes|langfuse [cli flags...]
+# Usage: capture.sh --id <capture-id> --source warp|claude-code|hermes|langfuse|oz [cli flags...]
+#        capture.sh --sessions --source warp|claude-code|hermes|langfuse|oz [cli flags...]
 #
 # - Runs the CLI from the caller's working directory, so relative paths resolve
 #   relative to YOUR project, not to this tool.
@@ -11,8 +11,9 @@
 # - Defaults --out to <project>/.agent-captures, where <project> is the MAIN git checkout of
 #   the caller's repository: a capture made in a disposable git worktree survives its removal
 #   (the decay-safe merge reads that store). Outside git, ./.agent-captures is used.
-#   --source langfuse uses its langfuse/ sub-store, so an id keeps one bundle per source
-#   (and --sessions files land in langfuse/sessions/). An explicit --out wins.
+#   --source langfuse and --source oz use their langfuse/ and oz/ sub-stores, so an id keeps
+#   one bundle per source (and --sessions files land in <sub-store>/sessions/). An explicit
+#   --out wins.
 # - Set AGENT_CAPTURE_CARGO_RUNNER (e.g. "mise exec rust@1.99.1 --") to run cargo through a
 #   version manager, or AGENT_CAPTURE_BIN to use a prebuilt binary.
 set -euo pipefail
@@ -75,21 +76,21 @@ if needs_build; then
 fi
 
 needs_default_out=1
-langfuse_source=0
+sub_store=""
 previous_arg=""
 for arg in "$@"; do
   case "${arg}" in
     --out | --out=* | -h | --help) needs_default_out=0 ;;
-    --source=langfuse) langfuse_source=1 ;;
-    langfuse) if [[ "${previous_arg}" == "--source" ]]; then langfuse_source=1; fi ;;
+    --source=langfuse | --source=oz) sub_store="${arg#--source=}" ;;
+    langfuse | oz) if [[ "${previous_arg}" == "--source" ]]; then sub_store="${arg}"; fi ;;
     *) ;;
   esac
   previous_arg="${arg}"
 done
 if [[ "${needs_default_out}" -eq 1 ]]; then
   store="$(default_store)"
-  if [[ "${langfuse_source}" -eq 1 ]]; then
-    store="${store}/langfuse"
+  if [[ -n "${sub_store}" ]]; then
+    store="${store}/${sub_store}"
   fi
   set -- "$@" --out "${store}"
 fi

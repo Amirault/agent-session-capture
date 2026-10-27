@@ -4,7 +4,7 @@
 
 ### Tag an AI coding session. Get the whole conversation back.
 
-Claude Code · Hermes · Warp · Langfuse → one chronological, greppable JSONL.
+Claude Code · Hermes · Warp (incl. headless `oz` runs) · Langfuse → one chronological, greppable JSONL.
 
 [![CI](https://github.com/Amirault/agent-session-capture/actions/workflows/ci.yml/badge.svg)](https://github.com/Amirault/agent-session-capture/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -61,7 +61,7 @@ session is tagged. Repeat in every session of the same task, with the **same nam
 # wrote /your/project/.agent-captures/checkout-bug.jsonl (199 events, 3 conversations)
 ```
 
-`--source` is `claude-code`, `hermes`, `warp` or `langfuse`.
+`--source` is `claude-code`, `hermes`, `warp`, `langfuse` or `oz` (headless Warp runs, see below).
 
 **3 · Read it** — it's plain JSONL:
 
@@ -132,9 +132,30 @@ Full reference: [docs/REFERENCE.md](docs/REFERENCE.md#session-mode).
 | `hermes`      | `<HERMES_HOME>/state.db` (SQLite, read-only)             | Compression continuations and delegate subagents followed.  |
 | `langfuse`    | A Langfuse project, v2 observations API (read-only)      | Sessions of agents that trace to Langfuse, e.g. on a server. |
 | `warp`        | Warp's local SQLite DB (macOS), via a read-only snapshot | Recovers assistant text from protobuf blobs, schema-less.   |
+| `oz`          | Headless `oz agent run` runs, from Warp's server via `oz` | Full conversation + token usage; given run ids or saved JSON. |
 
 Your agent isn't listed? [Write the next adapter](docs/ADAPTERS.md) — one small
 `ConversationReader` (Cursor, Codex CLI, Aider…). Contributions welcome.
+
+</details>
+
+<details>
+<summary><b>🤖 Headless Warp runs (<code>oz agent run</code>)</b></summary>
+
+A headless `oz agent run` leaves only its shell commands in Warp's local SQLite — no prompts, no
+answers, no conversation — so `--source warp` cannot bind it. Warp's server keeps the whole run:
+`--source oz` reads it through the `oz` CLI (`oz run get` for the run and its token usage,
+`oz run conversation get` for the conversation). Name the runs — their ids are printed on the
+first lines of `oz agent run` — or point at a directory of runs saved earlier:
+
+```bash
+~/tools/agent-session-capture/capture.sh --id checkout-bug --source oz --oz-runs <run-id>,<run-id>
+~/tools/agent-session-capture/capture.sh --sessions --source oz --oz-dir ./oz-runs   # {"run":…,"conversation":…} per *.json
+```
+
+Tag the run as usual: the agent runs `: CAPTURE_MARKER v=1 id=checkout-bug` as its own command.
+The run's `request_usage` (tokens per model, cache read/write, cost) lands once per conversation,
+as `meta.usage` on its first event. Details: [docs/REFERENCE.md](docs/REFERENCE.md#extract-one-capture-from-headless-warp-runs-oz).
 
 </details>
 
@@ -208,6 +229,8 @@ the **main checkout's** `.agent-captures/`, so they outlive the worktree.
   taken from `LANGFUSE_*` or `~/.config/langfuse/capture.env`, never printed).
 - Bundles hold your **raw prompts and tool output**: add `.agent-captures/` to your project's
   `.gitignore` and review a bundle before sharing it.
+- The `oz` source only reads: it runs `oz run get` and `oz run conversation get` with your
+  existing `oz` login, never anything that changes a run.
 
 </details>
 

@@ -86,9 +86,9 @@ fn spec_extraction_without_source_fails_before_reading_or_writing() {
     // Then
     assert_eq!(result.exit_code, 2);
     assert!(
-        result
-            .stderr
-            .contains(r#"error: --source is required for extraction ("warp", "claude-code", "hermes", or "langfuse")"#),
+        result.stderr.contains(
+            r#"error: --source is required for extraction ("warp", "claude-code", "hermes", "langfuse", or "oz")"#
+        ),
         "{}",
         result.stderr
     );

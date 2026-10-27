@@ -8,6 +8,8 @@ use crate::adapters::jsonl_bundle_reader::JsonlBundleReader;
 use crate::adapters::jsonl_sink::JsonlSink;
 use crate::adapters::langfuse_conversation_reader::LangfuseConversationReader;
 use crate::adapters::langfuse_observation_client::LangfuseObservationClient;
+use crate::adapters::oz_conversation_reader::OzConversationReader;
+use crate::adapters::oz_run_store::OzRuns;
 use crate::adapters::warp_conversation_reader::WarpConversationReader;
 use crate::adapters::warp_sqlite_adapter::WarpSqliteAdapter;
 use crate::domain::models::{BundleSource, CaptureBundle, js_display};
@@ -28,6 +30,8 @@ pub struct CliArgs {
     pub source: Option<String>,
     pub claude_root: Option<String>,
     pub langfuse_env: Option<String>,
+    pub oz_runs: Option<String>,
+    pub oz_dir: Option<String>,
     pub sessions: bool,
     pub since: Option<String>,
     pub conversation: Option<String>,
@@ -70,13 +74,13 @@ impl Outcome {
     }
 }
 
-const USAGE: &str = "usage: capture.sh --id <capture-id> --source warp|claude-code|hermes|langfuse [--no-merge] [--out dir] [--db-path path] [--claude-root dir] [--hermes-db-path path] [--langfuse-env file]
-       capture.sh --sessions --source warp|claude-code|hermes|langfuse [--since <ISO-8601>] [--conversation <cid>] [--no-merge] [--out dir] [--db-path path] [--claude-root dir] [--hermes-db-path path] [--langfuse-env file]";
+const USAGE: &str = "usage: capture.sh --id <capture-id> --source warp|claude-code|hermes|langfuse|oz [--no-merge] [--out dir] [--db-path path] [--claude-root dir] [--hermes-db-path path] [--langfuse-env file] [--oz-runs id,…] [--oz-dir dir]
+       capture.sh --sessions --source warp|claude-code|hermes|langfuse|oz [--since <ISO-8601>] [--conversation <cid>] [--no-merge] [--out dir] [--db-path path] [--claude-root dir] [--hermes-db-path path] [--langfuse-env file] [--oz-runs id,…] [--oz-dir dir]";
 
 const SOURCE_REQUIRED: &str =
-    "error: --source is required for extraction (\"warp\", \"claude-code\", \"hermes\", or \"langfuse\")";
+    "error: --source is required for extraction (\"warp\", \"claude-code\", \"hermes\", \"langfuse\", or \"oz\")";
 
-const STRING_OPTIONS: [&str; 9] = [
+const STRING_OPTIONS: [&str; 11] = [
     "id",
     "out",
     "db-path",
@@ -84,6 +88,8 @@ const STRING_OPTIONS: [&str; 9] = [
     "source",
     "claude-root",
     "langfuse-env",
+    "oz-runs",
+    "oz-dir",
     "since",
     "conversation",
 ];
@@ -106,6 +112,8 @@ fn set_string(args: &mut CliArgs, name: &str, value: String) {
         "source" => &mut args.source,
         "claude-root" => &mut args.claude_root,
         "langfuse-env" => &mut args.langfuse_env,
+        "oz-runs" => &mut args.oz_runs,
+        "oz-dir" => &mut args.oz_dir,
         "since" => &mut args.since,
         _ => &mut args.conversation,
     };
@@ -201,6 +209,16 @@ fn reader_for(args: &CliArgs, source: BundleSource) -> Box<dyn Reader> {
         BundleSource::Langfuse => Box::new(LangfuseConversationReader::new(LangfuseObservationClient::new(
             args.langfuse_env.clone(),
         ))),
+        BundleSource::Oz => Box::new(OzConversationReader::new(OzRuns::new(
+            args.oz_runs
+                .iter()
+                .flat_map(|ids| ids.split(','))
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string)
+                .collect(),
+            args.oz_dir.clone(),
+        ))),
         BundleSource::Warp => Box::new(WarpConversationReader::new(WarpSqliteAdapter::new(
             args.db_path.clone(),
         ))),
@@ -279,7 +297,7 @@ fn load_existing_bundle(
 fn parse_source(value: &str) -> Result<BundleSource, Outcome> {
     BundleSource::parse(value).ok_or_else(|| {
         Outcome::usage_error(vec![format!(
-            "error: --source must be \"warp\", \"claude-code\", \"hermes\", or \"langfuse\" (got \"{value}\")"
+            "error: --source must be \"warp\", \"claude-code\", \"hermes\", \"langfuse\", or \"oz\" (got \"{value}\")"
         )])
     })
 }

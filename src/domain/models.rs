@@ -110,6 +110,7 @@ pub enum BundleSource {
     ClaudeCode,
     Hermes,
     Langfuse,
+    Oz,
 }
 
 impl BundleSource {
@@ -119,6 +120,7 @@ impl BundleSource {
             BundleSource::ClaudeCode => "claude-code",
             BundleSource::Hermes => "hermes",
             BundleSource::Langfuse => "langfuse",
+            BundleSource::Oz => "oz",
         }
     }
 
@@ -128,6 +130,7 @@ impl BundleSource {
             "claude-code" => Some(BundleSource::ClaudeCode),
             "hermes" => Some(BundleSource::Hermes),
             "langfuse" => Some(BundleSource::Langfuse),
+            "oz" => Some(BundleSource::Oz),
             _ => None,
         }
     }

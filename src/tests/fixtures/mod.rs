@@ -6,6 +6,7 @@ pub mod fake_langfuse_server;
 pub mod fake_source;
 pub mod fixture_db;
 pub mod langfuse_observations;
+pub mod oz_runs;
 pub mod protobuf;
 pub mod test_proto_schema;
 

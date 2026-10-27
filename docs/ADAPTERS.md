@@ -8,6 +8,7 @@ An adapter turns one agent runtime's session store into the common bundle format
 | `hermes`      | `<HERMES_HOME>/state.db` (read-only, one read txn)     | exact marker line in an assistant shell tool call |
 | `langfuse`    | a Langfuse project, v2 observations API (read-only)    | exact marker line as a `TOOL`/`SPAN` shell `command` |
 | `warp`        | Warp's SQLite DB (`VACUUM INTO` snapshot, read-only)   | `commands` ⋈ `blocks` on `start_ts`               |
+| `oz`          | headless `oz agent run` runs: `oz run get` + `oz run conversation get` (or saved JSON) | exact marker line as a `run_command` action's `input.command` |
 
 Event mapping per source is documented in [REFERENCE.md](REFERENCE.md#what-it-does).
 

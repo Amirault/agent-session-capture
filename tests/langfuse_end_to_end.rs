@@ -496,3 +496,16 @@ fn capture_sh_id_with_source_claude_code_defaults_to_the_store() {
 fn capture_sh_sessions_with_source_langfuse_defaults_to_the_langfuse_sub_store() {
     assert_default_store(&["--sessions", "--source", "langfuse"], ".agent-captures/langfuse");
 }
+
+#[test]
+fn capture_sh_id_with_source_oz_defaults_to_the_oz_sub_store() {
+    assert_default_store(
+        &["--id", CAPTURE_ID, "--source", "oz", "--oz-runs", "run-1"],
+        ".agent-captures/oz",
+    );
+}
+
+#[test]
+fn capture_sh_sessions_with_source_equals_oz_defaults_to_the_oz_sub_store() {
+    assert_default_store(&["--sessions", "--source=oz", "--oz-dir", "runs"], ".agent-captures/oz");
+}

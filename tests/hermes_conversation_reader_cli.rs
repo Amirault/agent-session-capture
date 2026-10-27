@@ -206,7 +206,7 @@ fn given_an_unknown_source_when_the_cli_runs_should_list_hermes_without_changing
     assert!(
         result
             .stderr
-            .contains(r#""warp", "claude-code", "hermes", or "langfuse""#),
+            .contains(r#""warp", "claude-code", "hermes", "langfuse", or "oz""#),
         "stderr: {}",
         result.stderr
     );

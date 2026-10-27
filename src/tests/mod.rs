@@ -21,6 +21,7 @@ mod marker_docs_contract;
 mod marker_reader;
 mod merge_bundle;
 mod merge_event_lists;
+mod oz_conversation_reader;
 mod protobuf_walk;
 mod query_reader_block_reader;
 mod schema_overlay;

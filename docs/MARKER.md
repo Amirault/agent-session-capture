@@ -37,6 +37,7 @@ tool. The leading `:` is a shell builtin that does nothing (exit 0, no side effe
 | Runtime     | Shell tool                        |
 | ----------- | --------------------------------- |
 | Warp        | `run_shell_command`               |
+| Warp `oz agent run` | `run_command`             |
 | Claude Code | `Bash`                            |
 | Hermes      | `terminal` or `run_shell_command` |
 
@@ -78,6 +79,9 @@ The marker is deliberately easy to _suggest_ rather than hard-code:
 - **Hermes** — an exact marker line in an assistant `terminal`/`run_shell_command` tool call
   stored in `messages.tool_calls`. Compression continuations and delegate subagents are
   expanded through `parent_session_id`.
+- **Warp `oz agent run`** — an exact marker line as the `input.command` of a `run_command`
+  action in the run's conversation, read from Warp's server (`oz run conversation get`); the
+  conversation is the run's `conversation_id`.
 - **Langfuse** — an exact marker line as the `command` input of a `TOOL`/`SPAN` observation
   named `terminal`, `run_shell_command` or `Bash`, in a runtime that traces to Langfuse. The
   conversation is the `sessionId` of the observation's trace, else its `traceId`.

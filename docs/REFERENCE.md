@@ -13,6 +13,8 @@ Supported sources:
 - `hermes`: Hermes' canonical `<HERMES_HOME>/state.db` SQLite store.
 - `langfuse`: a Langfuse project (e.g. an agent tracing from a server), read
   through the v2 observations endpoint (`GET /api/public/v2/observations`).
+- `oz`: headless Warp `oz agent run` runs, read from Warp's server through the
+  `oz` CLI, or from runs saved as JSON.
 
 It is schema-less where a source schema is opaque (notably Warp's protobuf
 `agent_tasks.task` blob) and read-only against the live stores.
@@ -36,6 +38,8 @@ Given a capture id (any token, e.g. `JIRA-123` or `fix-login-bug`), the adapter:
      observation named `terminal`, `run_shell_command` or `Bash`; the
      conversation is the `sessionId` of the observation's trace (Langfuse sets it
      on the trace's root observation only), else its `traceId`.
+   - Oz: an exact marker line as the `input.command` of a `run_command` action
+     in the run's conversation; the conversation is its `conversation_id`.
 2. **Reads every event** for those conversations from the selected source:
    - Claude Code `type: "user"` entries → prompts and tool results
      (`kind: "query"` / `kind: "tool_result"`)
@@ -50,6 +54,20 @@ Given a capture id (any token, e.g. `JIRA-123` or `fix-login-bug`), the adapter:
      id); inputs are stamped at the observation's `startTime`, outputs
      (`agent_message`, `tool_result`) at its `endTime` (else `startTime`), and
      `meta.session_source` is the `agent` named in the trace root's metadata.
+   - Oz: every message of the conversation's steps (nested steps included, in
+     `timestamp` order) → a user `text` is the `query`, an assistant `text` an
+     `agent_message`, an assistant `action` a `command` when it is
+     `run_command` (`content` = `input.command`) else a `tool_call` (`content` =
+     the JSON `input`), both with `meta.tool` (its `name`), `meta.tool_call_id`
+     (its `id`) and `meta.fields` (its `input`); a `tool` `action_result` is a
+     `tool_result` with `meta.tool_call_id` (`action_id`) and, for a finished
+     command, `content` = `command_finished.output` and `meta.exit_code`, else
+     the JSON `output`. Every event carries `meta.model` (the run's
+     `agent_config.model_id`), `meta.exchange_id` (the message's `request_id`)
+     and `meta.run_id`; the first one also `meta.usage`, the run's
+     `request_usage`. `ts` is the message `timestamp`, its fraction padded to
+     nine digits so it sorts as text. Other content (`system` todo events) is
+     not exported. Long values are truncated as in Compaction below.
    - Warp reads three tables:
      - `ai_queries` → user prompts (`kind: "query"`)
      - `blocks` → shell command executions (`kind: "command"`), incl. subagent blocks
@@ -206,6 +224,28 @@ Missing keys exit `2`; an API or network failure exits `1` naming the HTTP statu
 and host (`error: Langfuse API 401 at https://cloud.langfuse.com`) and leaves the
 stored bundle untouched.
 
+### Extract one capture from headless Warp runs (oz)
+
+A headless `oz agent run` writes only its shell commands to Warp's local
+SQLite, so `--source warp` cannot bind it; Warp's server keeps the run and its
+conversation. Give the runs as `--oz-runs <run-id>[,<run-id>…]` (the ids
+printed on the first lines of `oz agent run`), read with the `oz` CLI on `PATH`
+and its current login (`oz run get <run-id> --output-format json`, then
+`oz run conversation get <conversation-id> --output-format json`), and/or as
+`--oz-dir <dir>`: every `*.json` file in it holds one saved run,
+`{"run": <oz run get>, "conversation": <oz run conversation get>}`.
+
+```bash
+/path/to/agent-session-capture/capture.sh --id <id> --source oz --oz-runs <run-id>,<run-id>
+/path/to/agent-session-capture/capture.sh --sessions --source oz --oz-dir ./oz-runs
+```
+
+`capture.sh` stores them in the `oz/` sub-store (`.agent-captures/oz/<id>.jsonl`).
+Neither flag exits `2`; an `oz` failure (not installed, not logged in, unknown
+run) exits `1` naming the `oz` command and leaves the stored bundle untouched.
+In session mode a session is one run's conversation, stamped with the run's
+`updated_at`; `--since` keeps the runs updated at/after it.
+
 Output is written to `out/<id>.jsonl` (relative to cwd), with a one-line summary:
 
 ```text
@@ -235,8 +275,8 @@ a marker was found but its binding block is gone — Warp can evict blocks rows 
 | Code | Meaning                                                                    |
 | ---- | -------------------------------------------------------------------------- |
 | `0`  | Bundle written.                                                            |
-| `1`  | Nothing written — zero conversations bound, or the Langfuse API failed.    |
-| `2`  | Usage error (bad/missing flag, missing Langfuse credentials).              |
+| `1`  | Nothing written — zero conversations bound, or the Langfuse API / `oz` failed. |
+| `2`  | Usage error (bad/missing flag, missing Langfuse credentials, no oz runs).  |
 
 ### CLI flags
 
@@ -245,11 +285,13 @@ a marker was found but its binding block is gone — Warp can evict blocks rows 
 | `--id <id>`               | Capture id to extract (required).                                                                                          |
 | `--no-merge`              | Replace the existing bundle instead of merging (default: merge decay-safe); required when intentionally switching sources. |
 | `--out <dir>`             | Output directory (default `out`; `capture.sh` defaults to the main checkout's `.agent-captures/`).                         |
-| `--source <source>`       | Conversation source: `warp`, `claude-code`, `hermes`, or `langfuse`; required.                                             |
+| `--source <source>`       | Conversation source: `warp`, `claude-code`, `hermes`, `langfuse`, or `oz`; required.                                       |
 | `--db-path <path>`        | Override the live Warp DB path (`--source warp`).                                                                          |
 | `--claude-root <dir>`     | Override Claude Code transcript root (`--source claude-code`, default `~/.claude/projects`).                               |
 | `--hermes-db-path <path>` | Override Hermes `state.db` (`--source hermes`, default `$HERMES_HOME/state.db`).                                           |
 | `--langfuse-env <file>`   | Langfuse credentials file read after the environment (`--source langfuse`, then `~/.config/langfuse/capture.env`).         |
+| `--oz-runs <ids>`         | Comma-separated `oz agent run` run ids, read through the `oz` CLI (`--source oz`).                                         |
+| `--oz-dir <dir>`          | Directory of saved runs, one `{"run":…,"conversation":…}` per `*.json` file (`--source oz`).                              |
 | `--sessions`              | Session mode: export every conversation, no marker — see [Session mode](#session-mode).                                    |
 | `--since <ISO-8601>`     | Session mode only: only conversations whose last activity is at/after the cutoff.                                        |
 | `--conversation <cid>`   | Session mode only: export exactly one conversation (debugging).                                                          |
@@ -544,6 +586,8 @@ src/
     langfuse_conversation_reader.rs — Langfuse observations → marker binding + events, sessions (client injected)
     langfuse_observation_client.rs — HTTP client of the v2 endpoint: credentials, pagination, API errors
     langfuse_observation_lister.rs — the lister port the reader needs, the client implements
+    oz_conversation_reader.rs      — headless Warp `oz agent run` conversations → marker binding + events, sessions
+    oz_run_store.rs                — the runs port: `oz` CLI shell-out (injected) or saved run JSON
     warp_conversation_reader.rs    — ConversationReader + SessionReader impl: binds markers, gathers events, enumerates sessions
     warp_sqlite_adapter.rs         — live DB discovery + VACUUM INTO snapshot
     sqlite_readable_db.rs          — read-only SQLite access (rusqlite, SQLite bundled)
